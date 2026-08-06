@@ -52,6 +52,7 @@ func main() {
 	scheduleSvc := service.NewScheduleService(db, recorderSvc)
 
 	// 启动后台服务
+	recorderSvc.ReconcileOrphaned()
 	monitor.Start()
 	scheduleSvc.Start()
 	if err := gb28181Svc.Start(); err != nil {

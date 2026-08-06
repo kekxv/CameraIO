@@ -27,10 +27,11 @@ type RecorderService struct {
 }
 
 type recordTask struct {
-	recording *model.Recording
-	cmd       *exec.Cmd
-	cancel    context.CancelFunc
-	stderr    *bytes.Buffer // 捕获 FFmpeg 错误输出
+	recording    *model.Recording
+	cmd          *exec.Cmd
+	cancel       context.CancelFunc
+	stderr       *bytes.Buffer // 捕获 FFmpeg 错误输出
+	forceStopped bool          // 是否由内部 watchdog 强制停止（到期）
 }
 
 func NewRecorderService(db *gorm.DB, cfg *pkg.Config) *RecorderService {
@@ -61,9 +62,10 @@ func (s *RecorderService) Shutdown() {
 type StartRecordingInput struct {
 	CameraID    uint   `json:"camera_id" binding:"required"`
 	CustomName  string `json:"custom_name"`
-	Format      string `json:"format"`      // "mp4" / "webm" / "ts" (默认 "mp4")
-	WithAudio   bool   `json:"with_audio"`  // 是否包含音频
+	Format      string `json:"format"`       // "mp4" / "webm" / "ts" (默认 "mp4")
+	WithAudio   bool   `json:"with_audio"`   // 是否包含音频
 	TriggerType string `json:"trigger_type"` // "api" / "manual" / "schedule"（默认 "api"）
+	MaxDuration int    `json:"max_duration"` // 最大录制时长（秒），0=不限；到期自动停止（录像器内部兜底）
 }
 
 type StopRecordingInput struct {
@@ -152,10 +154,34 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	s.tasks[recording.ID] = task
 	s.mu.Unlock()
 
+	// 录像器内部 watchdog：达到最大时长强制停止（不依赖调度器）
+	if in.MaxDuration > 0 {
+		go s.maxDurationWatchdog(recording.ID, task, in.MaxDuration)
+	}
+
 	// 后台等待 FFmpeg 退出（异常中断时更新状态）
 	go s.watchTask(recording.ID, task)
 
 	return recording, nil
+}
+
+// maxDurationWatchdog 在达到最大录制时长后强制停止录像。
+// 即使调度器/时间窗口逻辑失效，录像也会在到期时被停止。
+func (s *RecorderService) maxDurationWatchdog(recordingID uint, task *recordTask, maxSeconds int) {
+	time.Sleep(time.Duration(maxSeconds) * time.Second)
+
+	s.mu.Lock()
+	_, stillActive := s.tasks[recordingID]
+	if stillActive {
+		task.forceStopped = true // 标记为"到期停止"，让 watchTask 标记 completed
+	}
+	s.mu.Unlock()
+
+	if !stillActive {
+		return // 录像已通过其他方式停止
+	}
+	log.Printf("[recorder] recording %d reached max duration (%ds), force stopping", recordingID, maxSeconds)
+	task.cancel() // 取消 context → CommandContext 杀掉 FFmpeg
 }
 
 // buildRecordingArgs 根据格式和音频选项构建 FFmpeg 命令行参数。
@@ -286,6 +312,39 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 	return nil
 }
 
+// ReconcileOrphaned 清理孤儿录像记录：状态为 recording 但 FFmpeg 进程已不存在。
+// 服务启动时调用，修复因崩溃/强制退出导致的状态卡死。
+func (s *RecorderService) ReconcileOrphaned() {
+	var recs []model.Recording
+	if err := s.db.Where("status = ?", model.RecordingStatusRecording).Find(&recs).Error; err != nil {
+		log.Printf("[recorder] reconcile orphaned: %v", err)
+		return
+	}
+
+	now := time.Now()
+	for _, rec := range recs {
+		// 检查是否有活跃任务（内存中）
+		s.mu.Lock()
+		_, active := s.tasks[rec.ID]
+		s.mu.Unlock()
+		if active {
+			continue // 仍在录制
+		}
+		// 孤儿记录：FFmpeg 已不在运行，标记为 failed
+		var fileSize int64
+		if info, err := os.Stat(rec.FilePath); err == nil {
+			fileSize = info.Size()
+		}
+		s.db.Model(&rec).Updates(map[string]any{
+			"end_time":  now,
+			"file_size": fileSize,
+			"duration":  int(now.Sub(rec.StartTime).Seconds()),
+			"status":    model.RecordingStatusFailed,
+		})
+		log.Printf("[recorder] orphaned recording %d marked as failed (ffmpeg not running)", rec.ID)
+	}
+}
+
 // GetActiveRecordings 返回正在录制的记录列表。
 func (s *RecorderService) GetActiveRecordings() ([]model.Recording, error) {
 	var recs []model.Recording
@@ -306,6 +365,27 @@ func (s *RecorderService) watchTask(recordingID uint, task *recordTask) {
 	s.mu.Unlock()
 
 	if stillActive {
+		var fileSize int64
+		if info, statErr := os.Stat(task.recording.FilePath); statErr == nil {
+			fileSize = info.Size()
+		}
+
+		// 区分"到期强制停止"（正常完成）与"异常退出"（失败）
+		s.mu.Lock()
+		forceStopped := task.forceStopped
+		s.mu.Unlock()
+
+		if forceStopped {
+			log.Printf("[recorder] recording %d stopped by watchdog (completed)", recordingID)
+			s.db.Model(task.recording).Updates(map[string]any{
+				"end_time":  time.Now(),
+				"file_size": fileSize,
+				"duration":  int(time.Now().Sub(task.recording.StartTime).Seconds()),
+				"status":    model.RecordingStatusCompleted,
+			})
+			return
+		}
+
 		// FFmpeg 异常退出
 		stderrInfo := ""
 		if task.stderr != nil {
@@ -316,10 +396,6 @@ func (s *RecorderService) watchTask(recordingID uint, task *recordTask) {
 			stderrInfo = "\n" + last
 		}
 		log.Printf("[recorder] recording %d ffmpeg exited unexpectedly: %v%s", recordingID, err, stderrInfo)
-		var fileSize int64
-		if info, statErr := os.Stat(task.recording.FilePath); statErr == nil {
-			fileSize = info.Size()
-		}
 		s.db.Model(task.recording).Updates(map[string]any{
 			"end_time":  time.Now(),
 			"file_size": fileSize,

@@ -140,11 +140,13 @@ func (s *ScheduleService) checkSchedules() {
 
 		if inWindow && !isActive {
 			// 进入时间窗口 → 开始录像
+			// MaxDuration 传入录像器，由录像器内部兜底到点强制停止
 			rec, err := s.recorder.StartRecording(&StartRecordingInput{
 				CameraID:    sch.CameraID,
 				Format:      sch.Format,
 				WithAudio:   sch.WithAudio,
 				TriggerType: model.TriggerSchedule,
+				MaxDuration: scheduleDurationMin(&sch) * 60,
 			})
 			if err != nil {
 				log.Printf("[scheduler] schedule %d start recording failed: %v", sch.ID, err)

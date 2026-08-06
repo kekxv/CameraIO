@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -356,6 +357,68 @@ func TestDeleteRecording_MissingFile(t *testing.T) {
 	svc := NewRecorderService(db, &pkg.Config{})
 	if err := svc.DeleteRecording(rec.ID); err != nil {
 		t.Fatalf("DeleteRecording with missing file should not error: %v", err)
+	}
+}
+
+func TestReconcileOrphaned(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	now := time.Now()
+	// 孤儿记录：状态 recording，但任务不在内存中
+	orphan := &model.Recording{
+		CameraID:  1,
+		FilePath:  "/tmp/orphan.mp4",
+		StartTime: now.Add(-5 * time.Minute),
+		Status:    model.RecordingStatusRecording,
+	}
+	db.Create(orphan)
+
+	svc := NewRecorderService(db, &pkg.Config{})
+	svc.ReconcileOrphaned()
+
+	// 孤儿记录应标记为 failed
+	var updated model.Recording
+	db.First(&updated, orphan.ID)
+	if updated.Status != model.RecordingStatusFailed {
+		t.Errorf("orphan recording status = %s, want failed", updated.Status)
+	}
+	if updated.EndTime == nil {
+		t.Error("orphan recording should have end_time")
+	}
+	if updated.Duration <= 0 {
+		t.Errorf("orphan recording should have positive duration, got %d", updated.Duration)
+	}
+}
+
+func TestMaxDurationWatchdog_SetsForceStopped(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	// 用假的 exec.Cmd（进程不存在也能测试 forceStopped 标志）
+	rec := &model.Recording{CameraID: 1, FilePath: "/tmp/t.mp4", StartTime: time.Now()}
+	db.Create(rec)
+
+	svc := NewRecorderService(db, &pkg.Config{})
+	cmd := &exec.Cmd{}
+	task := &recordTask{
+		recording: rec,
+		cmd:       cmd,
+		cancel:    func() {},
+	}
+	svc.mu.Lock()
+	svc.tasks[rec.ID] = task
+	svc.mu.Unlock()
+
+	// 最大时长 1 秒，等待 watchdog 触发
+	svc.maxDurationWatchdog(rec.ID, task, 1)
+	time.Sleep(50 * time.Millisecond)
+
+	svc.mu.Lock()
+	forceStopped := task.forceStopped
+	svc.mu.Unlock()
+	if !forceStopped {
+		t.Error("maxDurationWatchdog should set forceStopped after max duration")
 	}
 }
 
