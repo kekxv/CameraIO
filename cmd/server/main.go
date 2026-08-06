@@ -53,6 +53,7 @@ func main() {
 
 	// 启动后台服务
 	recorderSvc.ReconcileOrphaned()
+	recorderSvc.StartSweep()
 	monitor.Start()
 	scheduleSvc.Start()
 	if err := gb28181Svc.Start(); err != nil {

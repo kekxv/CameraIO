@@ -475,6 +475,39 @@ func TestMaxDurationWatchdog_SetsForceStopped(t *testing.T) {
 	}
 }
 
+func TestIsProcessAlive(t *testing.T) {
+	// nil cmd → 不存活
+	if isProcessAlive(nil) {
+		t.Error("nil cmd should be not alive")
+	}
+
+	// 未启动的 cmd → 不存活（Process 为 nil）
+	cmd := &exec.Cmd{}
+	if isProcessAlive(cmd) {
+		t.Error("cmd without Process should be not alive")
+	}
+
+	// 已退出的进程 → 不存活
+	doneCmd := exec.Command("true")
+	if err := doneCmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if isProcessAlive(doneCmd) {
+		t.Error("exited process should be not alive")
+	}
+
+	// 运行中的进程 → 存活
+	pingCmd := exec.Command("sh", "-c", "sleep 1")
+	if err := pingCmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if !isProcessAlive(pingCmd) {
+		t.Error("running process should be alive")
+	}
+	pingCmd.Process.Kill()
+	pingCmd.Wait()
+}
+
 func TestGetActiveRecordingByCamera(t *testing.T) {
 	db, cleanup := setupRecorderTestDB(t)
 	defer cleanup()

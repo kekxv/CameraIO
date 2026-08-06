@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"CameraIO/internal/model"
@@ -22,10 +23,12 @@ import (
 
 // RecorderService 管理录像任务：Stream-Copy 将 RTSP 流直接写入 MP4。
 type RecorderService struct {
-	db      *gorm.DB
-	cfg     *pkg.Config
-	mu      sync.Mutex
-	tasks   map[uint]*recordTask // recordingID → task
+	db     *gorm.DB
+	cfg    *pkg.Config
+	mu     sync.Mutex
+	tasks  map[uint]*recordTask // recordingID → task
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type recordTask struct {
@@ -37,16 +40,80 @@ type recordTask struct {
 }
 
 func NewRecorderService(db *gorm.DB, cfg *pkg.Config) *RecorderService {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &RecorderService{
-		db:    db,
-		cfg:   cfg,
-		tasks: make(map[uint]*recordTask),
+		db:     db,
+		cfg:    cfg,
+		tasks:  make(map[uint]*recordTask),
+		ctx:    ctx,
+		cancel: cancel,
 	}
+}
+
+// StartSweep 启动周期清扫：检测活跃录像的 FFmpeg 进程是否存活，
+// 若已死但 watchTask 未清理，则强制 finalize。兜底机制。
+func (s *RecorderService) StartSweep() {
+	go s.sweepLoop()
+}
+
+func (s *RecorderService) sweepLoop() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.sweepDeadProcesses()
+		}
+	}
+}
+
+// sweepDeadProcesses 检查所有活跃任务，finalize 已死亡进程的录像。
+func (s *RecorderService) sweepDeadProcesses() {
+	s.mu.Lock()
+	var dead []*recordTask
+	for _, t := range s.tasks {
+		if !isProcessAlive(t.cmd) {
+			dead = append(dead, t)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, t := range dead {
+		s.mu.Lock()
+		if _, ok := s.tasks[t.recording.ID]; ok {
+			delete(s.tasks, t.recording.ID)
+		}
+		s.mu.Unlock()
+		s.finalizeRecording(t.recording.ID, t)
+		log.Printf("[recorder] sweep: recording %d ffmpeg not alive, finalized", t.recording.ID)
+	}
+}
+
+// isProcessAlive 检查进程是否存活（跨平台）。
+func isProcessAlive(cmd *exec.Cmd) bool {
+	if cmd == nil || cmd.Process == nil {
+		return false
+	}
+	if cmd.ProcessState != nil {
+		return false // Wait 已调用，进程已退出
+	}
+	err := cmd.Process.Signal(syscall.Signal(0))
+	if err == nil {
+		return true
+	}
+	if err == os.ErrProcessDone {
+		return false
+	}
+	// 平台不支持 signal 0（如 Windows）→ 通过 ProcessState 判断，假设存活
+	return true
 }
 
 // Shutdown 停止所有正在进行的录像任务（优雅关闭时调用）。
 // 会更新数据库状态，避免重启后留下"录制中"的孤儿记录。
 func (s *RecorderService) Shutdown() {
+	s.cancel()
 	s.mu.Lock()
 	tasks := make([]*recordTask, 0, len(s.tasks))
 	for _, t := range s.tasks {
@@ -413,7 +480,9 @@ func (s *RecorderService) GetActiveRecordings() ([]model.Recording, error) {
 
 // watchTask 监控 FFmpeg 进程退出并更新状态。
 func (s *RecorderService) watchTask(recordingID uint, task *recordTask) {
+	log.Printf("[recorder] watchTask started for recording %d", recordingID)
 	err := task.cmd.Wait()
+	log.Printf("[recorder] watchTask: recording %d ffmpeg exited, wait returned: %v", recordingID, err)
 	s.mu.Lock()
 	_, stillActive := s.tasks[recordingID]
 	if stillActive {
@@ -454,21 +523,27 @@ func (s *RecorderService) finalizeRecording(recordingID uint, task *recordTask) 
 
 	if fileSize > 0 {
 		// 文件有效 → completed
-		s.db.Model(&model.Recording{}).Where("id = ?", recordingID).Updates(map[string]any{
+		if err := s.db.Model(&model.Recording{}).Where("id = ?", recordingID).Updates(map[string]any{
 			"end_time":  now,
 			"file_size": fileSize,
 			"duration":  probeVideoDuration(task.recording.FilePath),
 			"status":    model.RecordingStatusCompleted,
-		})
-		log.Printf("[recorder] recording %d finalized as completed (%d bytes)", recordingID, fileSize)
+		}).Error; err != nil {
+			log.Printf("[recorder] recording %d finalize to completed FAILED: %v", recordingID, err)
+		} else {
+			log.Printf("[recorder] recording %d finalized as completed (%d bytes)", recordingID, fileSize)
+		}
 	} else {
 		// 无文件 → failed
-		s.db.Model(&model.Recording{}).Where("id = ?", recordingID).Updates(map[string]any{
+		if err := s.db.Model(&model.Recording{}).Where("id = ?", recordingID).Updates(map[string]any{
 			"end_time":  now,
 			"duration":  int(now.Sub(task.recording.StartTime).Seconds()),
 			"status":    model.RecordingStatusFailed,
-		})
-		log.Printf("[recorder] recording %d finalized as failed (no valid file)", recordingID)
+		}).Error; err != nil {
+			log.Printf("[recorder] recording %d finalize to failed FAILED: %v", recordingID, err)
+		} else {
+			log.Printf("[recorder] recording %d finalized as failed (no valid file)", recordingID)
+		}
 	}
 }
 
