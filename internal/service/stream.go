@@ -616,6 +616,43 @@ func (s *StreamService) transcodeMJPEG(st *Stream) error {
 }
 
 // parseMJPEGFrames 从 MJPEG 流中解析完整的 JPEG 帧（以 SOI/EOI 分隔）。
+// StartH264MJPEGTranscoder 启动一个持续的 H.264→MJPEG 转码器。
+// 返回用于写入 NALU（带 start code）的 writer；转码器以 ~12 FPS 输出 JPEG。
+// 供 GB28181 等非 RTSP 流使用（没有 RTSP 可拉的场景）。
+func (s *StreamService) StartH264MJPEGTranscoder(st *Stream) (io.WriteCloser, error) {
+	cmd := exec.CommandContext(st.ctx, pkg.FFmpegBinPath(),
+		"-f", "h264",
+		"-i", "pipe:0",
+		"-vf", "fps=12,scale='min(960,iw)':-2",
+		"-f", "mjpeg",
+		"-q:v", "4",
+		"pipe:1",
+	)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("ffmpeg start: %w", err)
+	}
+
+	// context 取消时杀死 FFmpeg
+	go func() {
+		<-st.ctx.Done()
+		cmd.Process.Kill()
+	}()
+	go func() {
+		defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+		_ = s.parseMJPEGFrames(st, stdout)
+	}()
+
+	return stdin, nil
+}
+
 func (s *StreamService) parseMJPEGFrames(st *Stream, r io.Reader) error {
 	var pending []byte
 	buf := make([]byte, 64*1024)

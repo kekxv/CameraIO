@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -709,7 +710,19 @@ func (s *GB28181Service) startRTPReceiver(port int, cameraID uint) error {
 		}
 	}
 
+	// 启动持续 H.264→MJPEG 转码器（~12 FPS），供预览
+	var mjpegWriter io.WriteCloser
+	if stream != nil && s.streams != nil {
+		w, err := s.streams.StartH264MJPEGTranscoder(stream)
+		if err != nil {
+			log.Printf("[GB28181] start MJPEG transcoder: %v", err)
+		} else {
+			mjpegWriter = w
+		}
+	}
+
 	// 创建 PS 解封装器，将 NALU 注入 stream 的 NALU 广播
+	startCode := []byte{0, 0, 0, 1}
 	var demux *PSDemuxer
 	if stream != nil {
 		demux = NewPSDemuxer(func(nalu []byte) {
@@ -732,27 +745,14 @@ func (s *GB28181Service) startRTPReceiver(port int, cameraID uint) error {
 			case 8: // PPS
 				stream.pps = make([]byte, len(nalu))
 				copy(stream.pps, nalu)
-			case 5: // IDR
-				// 提取 JPEG 用于 MJPEG 预览（节流，避免 FFmpeg 进程堆积）
-				if s.streams != nil {
-					stream.extractMu.Lock()
-					shouldExtract := !stream.extracting && time.Since(stream.lastExtractAt) >= 800*time.Millisecond
-					if shouldExtract {
-						stream.extracting = true
-						stream.lastExtractAt = time.Now()
-					}
-					stream.extractMu.Unlock()
-					if shouldExtract {
-						go func() {
-							defer func() {
-								stream.extractMu.Lock()
-								stream.extracting = false
-								stream.extractMu.Unlock()
-							}()
-							s.streams.extractJPEG(stream, nalu)
-						}()
-					}
-				}
+			}
+
+			// 喂给持续转码器（H.264 Annex B → MJPEG 12FPS）
+			if mjpegWriter != nil {
+				buf := make([]byte, 0, len(startCode)+len(nalu))
+				buf = append(buf, startCode...)
+				buf = append(buf, nalu...)
+				_, _ = mjpegWriter.Write(buf)
 			}
 
 			// 广播给所有订阅者
