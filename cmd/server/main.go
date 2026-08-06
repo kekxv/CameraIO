@@ -1,0 +1,107 @@
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"CameraIO/internal/api"
+	"CameraIO/internal/pkg"
+	"CameraIO/internal/service"
+)
+
+func main() {
+	cfg := pkg.DefaultConfig()
+
+	// 确保记录目录存在
+	if err := os.MkdirAll(cfg.RecordingsDir, 0o755); err != nil {
+		log.Fatalf("create recordings dir: %v", err)
+	}
+
+	// 确保 FFmpeg 可用（自动下载或找到系统安装）
+	ffmpegPath, ffprobePath, err := pkg.EnsureFFmpeg()
+	if err != nil {
+		log.Printf("⚠️ FFmpeg 未找到: %v", err)
+		log.Printf("   流媒体功能将不可用。请安装 FFmpeg 或设置 CAMERAIO_FFMPEG_PATH 环境变量")
+	} else {
+		log.Printf("FFmpeg: %s, FFprobe: %s", ffmpegPath, ffprobePath)
+	}
+
+	// 初始化数据库
+	db, err := pkg.InitDB(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("init database: %v", err)
+	}
+
+	// 初始化服务
+	jwtCfg := pkg.NewJWTConfig(cfg.JWTSecret)
+	userSvc := service.NewUserService(db, jwtCfg)
+	onvifSvc := service.NewONVIFService()
+	cameraSvc := service.NewCameraService(db, onvifSvc)
+	streamSvc := service.NewStreamService(db)
+	webrtcSvc := service.NewWebRTCService()
+	recorderSvc := service.NewRecorderService(db, cfg)
+	eventBus := service.NewEventBus()
+	monitor := service.NewSystemMonitor(db, eventBus)
+	gb28181Svc := service.NewGB28181Service(cfg, db, eventBus, streamSvc)
+	localCamSvc := service.NewLocalCameraService()
+	discoverySvc := service.NewDiscoveryService(onvifSvc)
+	scheduleSvc := service.NewScheduleService(db, recorderSvc)
+
+	// 启动后台服务
+	monitor.Start()
+	scheduleSvc.Start()
+	if err := gb28181Svc.Start(); err != nil {
+		log.Printf("[GB28181] failed to start SIP server: %v", err)
+	}
+
+	// 初始化 Handler
+	handler := api.NewHandler(userSvc, cameraSvc, streamSvc, webrtcSvc, recorderSvc, eventBus, localCamSvc, discoverySvc, scheduleSvc, jwtCfg)
+	router := handler.SetupRouter()
+
+	// 注册前端静态文件服务
+	registerFrontend(router)
+
+	// 使用 http.Server 代替 router.Run()，这样可以通过 Shutdown() 优雅停止
+	srv := &http.Server{
+		Addr:    cfg.Addr,
+		Handler: router,
+	}
+
+	// 启动 HTTP 服务（goroutine 中）
+	go func() {
+		log.Printf("CameraIO server starting on %s", cfg.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server run: %v", err)
+		}
+	}()
+
+	// 等待退出信号
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigCh
+	log.Printf("收到信号 %v，开始优雅关闭...", sig)
+
+	// 优雅关闭：15 秒超时
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// 1. 先停止后台服务（拉流/录像），让 MJPEG 等长连接请求尽快返回
+	cameraSvc.Shutdown()
+	streamSvc.Shutdown()
+	scheduleSvc.Stop()
+	recorderSvc.Shutdown()
+	monitor.Stop()
+	gb28181Svc.Stop()
+
+	// 2. 停止接收新连接（等待现有请求完成）
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
+	}
+
+	log.Println("CameraIO 已关闭")
+}
