@@ -767,8 +767,8 @@ func (s *GB28181Service) buildInviteSDP(rtpPort int, deviceIP string) string {
 		"c=IN IP4 %s\r\n"+
 		"t=0 0\r\n"+
 		"m=video %d RTP/AVP 96\r\n"+
+		"a=sendonly\r\n"+
 		"a=rtpmap:96 PS/90000\r\n"+
-		"a=recvonly\r\n"+
 		"a=encrypt:0\r\n",
 		s.cfg.SIPServerID, localIP, localIP, rtpPort)
 }
