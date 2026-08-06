@@ -75,7 +75,26 @@ type Stream struct {
 	// 持续 MJPEG 转码器（10+ FPS）
 	mjpegDone chan struct{}
 
+	// MJPEG 客户端计数（用于最后一个客户端断开时自动停流）
+	mjpegCount int
+
 	done chan struct{}
+}
+
+// IncMJPEGClient 增加一个 MJPEG 客户端计数。
+func (st *Stream) IncMJPEGClient() {
+	st.mu.Lock()
+	st.mjpegCount++
+	st.mu.Unlock()
+}
+
+// DecMJPEGClient 减少一个 MJPEG 客户端计数，返回是否已无客户端。
+func (st *Stream) DecMJPEGClient() bool {
+	st.mu.Lock()
+	st.mjpegCount--
+	zero := st.mjpegCount <= 0
+	st.mu.Unlock()
+	return zero
 }
 
 // NALU 代表一帧 H.264 NAL 单元。

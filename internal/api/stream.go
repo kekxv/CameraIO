@@ -46,14 +46,27 @@ func (h *Handler) StreamMJPEG(c *gin.Context) {
 		stream = h.streamSvc.GetStream(id)
 	}
 
+	// 增加 MJPEG 客户端计数，断开时自动停流
+	stream.IncMJPEGClient()
+	stopIfIdle := func() {
+		if stream.DecMJPEGClient() {
+			// 无 MJPEG 客户端了；若该摄像头没有录像任务，则停止流
+			if rec, _ := h.recorderSvc.GetActiveRecordingByCamera(id); rec == nil {
+				h.streamSvc.StopStream(id)
+			}
+		}
+	}
+
 	// 等待第一帧 JPEG 出现（最多 10 秒），同时响应客户端断开和流停止
 	deadline := time.Now().Add(10 * time.Second)
 	for stream.GetLatestJPEG() == nil {
 		select {
 		case <-c.Request.Context().Done():
-			return // 客户端断开
+			stopIfIdle() // 客户端断开
+			return
 		case <-stream.Done():
-			return // 流已停止
+			stopIfIdle() // 流已停止
+			return
 		default:
 		}
 		if time.Now().After(deadline) {
@@ -68,6 +81,7 @@ func (h *Handler) StreamMJPEG(c *gin.Context) {
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
+		stopIfIdle()
 		fail(c, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
@@ -76,11 +90,14 @@ func (h *Handler) StreamMJPEG(c *gin.Context) {
 	for {
 		select {
 		case <-c.Request.Context().Done():
-			return // 客户端断开
+			stopIfIdle() // 客户端断开（关页面/切走/mjpeg 断开）
+			return
 		case <-stream.Done():
-			return // 流已停止
+			stopIfIdle() // 流已停止
+			return
 		case jpg, ok := <-frames:
 			if !ok {
+				stopIfIdle()
 				return
 			}
 			io.WriteString(c.Writer, "--frame\r\n")
