@@ -761,16 +761,19 @@ func (s *GB28181Service) queryDeviceCatalog(deviceID string) {
 
 func (s *GB28181Service) buildInviteSDP(rtpPort int, deviceIP string) string {
 	localIP := s.getLocalIPFor(deviceIP)
+	// 生成 10 位 SSRC（海康要求 SDP 包含 y= 字段才推流）
+	ssrc := fmt.Sprintf("%010d", time.Now().UnixNano()%10000000000)
 	return fmt.Sprintf("v=0\r\n"+
 		"o=%s 0 0 IN IP4 %s\r\n"+
 		"s=Play\r\n"+
 		"c=IN IP4 %s\r\n"+
 		"t=0 0\r\n"+
 		"m=video %d RTP/AVP 96\r\n"+
-		"a=sendonly\r\n"+
+		"a=recvonly\r\n"+
 		"a=rtpmap:96 PS/90000\r\n"+
-		"a=encrypt:0\r\n",
-		s.cfg.SIPServerID, localIP, localIP, rtpPort)
+		"a=encrypt:0\r\n"+
+		"y=%s\r\n",
+		s.cfg.SIPServerID, localIP, localIP, rtpPort, ssrc)
 }
 
 func (s *GB28181Service) buildINVITE(channelID string, dev *DeviceSession, sdp, subject string) string {
