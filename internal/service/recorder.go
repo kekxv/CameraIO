@@ -310,7 +310,11 @@ func (s *RecorderService) startGB28181Recording(recording *model.Recording, cam 
 	case model.FormatMP4:
 		ffArgs = append(ffArgs, "-movflags", "+frag_keyframe+empty_moov", "-f", "mp4")
 	case model.FormatWebM:
-		ffArgs = append(ffArgs, "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "4", "-f", "webm")
+		ffArgs = append(ffArgs, "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "4")
+		if bitrate > 0 {
+			ffArgs = append(ffArgs, "-b:v", fmt.Sprintf("%dk", bitrate))
+		}
+		ffArgs = append(ffArgs, "-f", "webm")
 	case model.FormatTS:
 		ffArgs = append(ffArgs, "-f", "mpegts")
 	}
