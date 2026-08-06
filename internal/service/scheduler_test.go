@@ -128,6 +128,92 @@ func TestHasDay(t *testing.T) {
 	}
 }
 
+func TestScheduleDurationMin(t *testing.T) {
+	tests := []struct {
+		start    string
+		end      string
+		expected int
+	}{
+		{"10:25", "10:35", 10},
+		{"09:00", "17:00", 480},
+		{"00:00", "00:00", 0},   // 零时长
+		{"22:00", "06:00", 0},   // 跨午夜 → 返回 0
+		{"invalid", "10:00", 0}, // 解析失败
+	}
+	for _, tt := range tests {
+		t.Run(tt.start+"-"+tt.end, func(t *testing.T) {
+			sch := &model.RecordingSchedule{StartTime: tt.start, EndTime: tt.end}
+			got := scheduleDurationMin(sch)
+			if got != tt.expected {
+				t.Errorf("scheduleDurationMin(%s, %s) = %d, want %d", tt.start, tt.end, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestWatchdogStop(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:watchdog_test?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AutoMigrate(&model.RecordingSchedule{}, &model.Camera{})
+
+	// 创建 10 分钟窗口的计划
+	sch := &model.RecordingSchedule{
+		Name:      "watchdog test",
+		CameraID:  1,
+		StartTime: "10:00",
+		EndTime:   "10:10",
+		Days:      model.DayAllWeek,
+	}
+	db.Create(sch)
+
+	svc := NewScheduleService(db, nil)
+
+	// 模拟一个已运行 11 分钟的活跃录像（超过窗口 10 分钟）
+	svc.mu.Lock()
+	svc.active[sch.ID] = &activeSchedule{
+		RecordingID: 100,
+		CameraID:    1,
+		StartTime:   time.Now().Add(-11 * time.Minute),
+	}
+	svc.mu.Unlock()
+
+	// watchdog 应该标记为停止（recorder 为 nil，StopRecording 会 panic？
+	// 我们只验证 watchdog 检测逻辑，recorder 是 nil 时 StopRecording 会 panic。
+	// 这里手动调用 watchdogStop 会走到 stopSchedule → recorder 为 nil → panic。
+	// 所以用 recover 包裹验证它被触发。
+	func() {
+		defer func() { _ = recover() }() // 忽略 nil recorder panic
+		svc.watchdogStop(time.Now())
+	}()
+
+	// active 应该被清空
+	svc.mu.Lock()
+	_, stillActive := svc.active[sch.ID]
+	svc.mu.Unlock()
+	if stillActive {
+		t.Error("watchdog should have removed the over-duration active recording")
+	}
+
+	// 未超时的录像不应被停止
+	svc.mu.Lock()
+	svc.active[sch.ID] = &activeSchedule{
+		RecordingID: 101,
+		CameraID:    1,
+		StartTime:   time.Now().Add(-2 * time.Minute), // 只运行 2 分钟
+	}
+	svc.mu.Unlock()
+
+	svc.watchdogStop(time.Now())
+	svc.mu.Lock()
+	_, stillActive = svc.active[sch.ID]
+	svc.mu.Unlock()
+	if !stillActive {
+		t.Error("watchdog should NOT stop a recording within the window")
+	}
+}
+
 func TestScheduleService_CRUD(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	if err != nil {

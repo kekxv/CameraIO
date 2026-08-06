@@ -248,7 +248,25 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 
 	// 发送 SIGINT 让 FFmpeg 优雅关闭（写入 moov atom）
 	task.cancel()
-	_ = task.cmd.Wait()
+
+	// 等待 FFmpeg 退出，但加超时避免阻塞（部分设备/编码下进程退出慢）
+	if task.cmd.Process != nil {
+		task.cmd.Process.Signal(os.Interrupt)
+	}
+	waitDone := make(chan struct{})
+	go func() {
+		task.cmd.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(10 * time.Second):
+		// 超时仍没退出，强制杀死
+		if task.cmd.Process != nil {
+			task.cmd.Process.Kill()
+		}
+		<-waitDone
+	}
 
 	// 获取文件大小
 	var fileSize int64

@@ -94,18 +94,28 @@ func (s *ScheduleService) Stop() {
 }
 
 func (s *ScheduleService) loop() {
-	// 启动后立即检查一次，再每 30 秒检查
+	// 启动后立即检查一次，再每 15 秒检查
 	s.checkSchedules()
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			s.checkSchedules()
+			s.safeCheck()
 		}
 	}
+}
+
+// safeCheck 带 recover 的检查，防止异常导致调度循环终止。
+func (s *ScheduleService) safeCheck() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[scheduler] check recovered from panic: %v", r)
+		}
+	}()
+	s.checkSchedules()
 }
 
 // checkSchedules 检查所有启用的计划并执行开始/停止操作。
@@ -120,6 +130,7 @@ func (s *ScheduleService) checkSchedules() {
 	// 清理已完成的活跃记录（对应录像已停止的情况）
 	s.cleanupStaleActive(now)
 
+	// 1. 按时间窗口开始/停止
 	for _, sch := range schedules {
 		inWindow := inScheduleWindow(&sch, now)
 
@@ -152,6 +163,49 @@ func (s *ScheduleService) checkSchedules() {
 			s.stopSchedule(sch.ID)
 		}
 	}
+
+	// 2. Watchdog: 强制停止已超过时间窗口的活跃录像（防止因任何原因漏停）
+	s.watchdogStop(now)
+}
+
+// watchdogStop 兜底：活跃录像运行时长超过其窗口时长（+10s 宽限）时强制停止。
+// 不依赖 inWindow 判断，即使时间窗口逻辑有误也能兜住。
+func (s *ScheduleService) watchdogStop(now time.Time) {
+	s.mu.Lock()
+	var toStop []uint
+	for id, act := range s.active {
+		var sch model.RecordingSchedule
+		if err := s.db.First(&sch, id).Error; err != nil {
+			continue
+		}
+		dur := scheduleDurationMin(&sch)
+		if dur <= 0 {
+			continue // 无法计算窗口时长（如跨午夜场景由 inWindow 处理）
+		}
+		elapsed := now.Sub(act.StartTime)
+		if elapsed > time.Duration(dur)*time.Minute+10*time.Second {
+			toStop = append(toStop, id)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, id := range toStop {
+		log.Printf("[scheduler] watchdog: schedule %d exceeded window, force stopping", id)
+		s.stopSchedule(id)
+	}
+}
+
+// scheduleDurationMin 计算计划窗口时长（分钟）。跨午夜（end<start）返回 0。
+func scheduleDurationMin(sch *model.RecordingSchedule) int {
+	start, ok1 := parseHHMM(sch.StartTime)
+	end, ok2 := parseHHMM(sch.EndTime)
+	if !ok1 || !ok2 {
+		return 0
+	}
+	if end <= start {
+		return 0 // 跨午夜，交给 inWindow 处理
+	}
+	return end - start
 }
 
 // stopSchedule 停止指定计划的录像。
