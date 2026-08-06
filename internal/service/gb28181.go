@@ -301,6 +301,9 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 	// 发送 200 OK
 	s.sendRegisterOK(raw, remoteAddr, transport, callID, cseq, expires)
 	log.Printf("[GB28181] Device registered: %s from %s", deviceID, remoteAddr)
+
+	// 注册成功后查询设备的 Catalog，获取真实通道列表
+	go s.queryDeviceCatalog(deviceID)
 }
 
 func (s *GB28181Service) sendRegisterOK(req string, remoteAddr net.Addr, transport, callID, cseq string, expires int) {
@@ -450,9 +453,8 @@ func (s *GB28181Service) handleMessage(raw string, remoteAddr net.Addr, transpor
 			Update("last_time_sync", time.Now())
 
 	case "Catalog":
-		// 目录查询响应
-		response := s.buildCatalogResponse(deviceID)
-		s.sendSIPMessageResponse(raw, remoteAddr, transport, callID, cseq, deviceID, response)
+		// 设备返回的目录查询响应：提取通道列表并记录
+		s.logDeviceChannels(body, deviceID)
 
 	case "DeviceInfo":
 		response := s.buildDeviceInfoResponse(deviceID)
@@ -460,6 +462,27 @@ func (s *GB28181Service) handleMessage(raw string, remoteAddr net.Addr, transpor
 
 	default:
 		s.sendSIPResponse(raw, remoteAddr, transport, 200, "OK")
+	}
+}
+
+// logDeviceChannels 解析设备返回的 Catalog 响应，记录可用通道。
+func (s *GB28181Service) logDeviceChannels(xmlBody, deviceID string) {
+	// 提取所有 <DeviceID> 和 <Name>
+	idRe := regexp.MustCompile(`<DeviceID>([^<]+)</DeviceID>`)
+	nameRe := regexp.MustCompile(`<Name>([^<]+)</Name>`)
+	ids := idRe.FindAllStringSubmatch(xmlBody, -1)
+	names := nameRe.FindAllStringSubmatch(xmlBody, -1)
+
+	if len(ids) == 0 {
+		log.Printf("[GB28181] device %s catalog has no channels", deviceID)
+		return
+	}
+	for i, m := range ids {
+		name := ""
+		if i < len(names) {
+			name = names[i][1]
+		}
+		log.Printf("[GB28181] device %s channel: %s (%s)", deviceID, m[1], name)
 	}
 }
 
@@ -689,16 +712,64 @@ func (s *GB28181Service) startRTPReceiver(port int, cameraID uint) error {
 	return nil
 }
 
+// queryDeviceCatalog 向设备发送 Catalog 查询，获取真实通道列表。
+func (s *GB28181Service) queryDeviceCatalog(deviceID string) {
+	s.mu.RLock()
+	dev, ok := s.devices[deviceID]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="GB2312"?>
+<Query>
+<CmdType>Catalog</CmdType>
+<SN>1</SN>
+<DeviceID>%s</DeviceID>
+</Query>`, deviceID)
+
+	callID := generateCallID()
+	localIP := s.getLocalIP()
+	domain := dev.Domain
+	if domain == "" {
+		domain = s.cfg.SIPRealm
+	}
+	msg := fmt.Sprintf("MESSAGE sip:%s@%s SIP/2.0\r\n"+
+		"Via: SIP/2.0/%s %s:5060;rport;branch=z9hG4bK%s\r\n"+
+		"From: <sip:%s@%s>;tag=CameraIO-catalog\r\n"+
+		"To: <sip:%s@%s>\r\n"+
+		"Call-ID: %s\r\n"+
+		"CSeq: 1 MESSAGE\r\n"+
+		"Max-Forwards: 70\r\n"+
+		"Content-Type: Application/MANSCDP+xml\r\n"+
+		"Content-Length: %d\r\n"+
+		"\r\n"+
+		"%s",
+		deviceID, domain,
+		dev.Transport, localIP, generateBranch(),
+		s.cfg.SIPServerID, domain,
+		deviceID, domain,
+		callID,
+		len(body),
+		body)
+
+	addr := &net.UDPAddr{IP: net.ParseIP(dev.IP), Port: dev.Port}
+	s.sendSIPRaw(msg, addr, dev.Transport)
+	log.Printf("[GB28181] sent Catalog query to device %s", deviceID)
+}
+
 func (s *GB28181Service) buildInviteSDP(rtpPort int) string {
+	localIP := s.getLocalIP()
 	return fmt.Sprintf("v=0\r\n"+
 		"o=%s 0 0 IN IP4 %s\r\n"+
 		"s=Play\r\n"+
 		"c=IN IP4 %s\r\n"+
 		"t=0 0\r\n"+
 		"m=video %d RTP/AVP 96\r\n"+
+		"a=rtpmap:96 PS/90000\r\n"+
 		"a=recvonly\r\n"+
-		"a=rtpmap:96 PS/90000\r\n",
-		s.cfg.SIPServerID, s.getLocalIP(), s.getLocalIP(), rtpPort)
+		"a=encrypt:0\r\n",
+		s.cfg.SIPServerID, localIP, localIP, rtpPort)
 }
 
 func (s *GB28181Service) buildINVITE(channelID string, dev *DeviceSession, sdp, subject string) string {
