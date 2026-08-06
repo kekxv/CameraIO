@@ -603,8 +603,8 @@ func (s *GB28181Service) InviteStream(ctx context.Context, channelID string) (in
 		_ = s.streams.StartStream(cam.ID)
 	}
 
-	// 构建 INVITE SDP
-	sdp := s.buildInviteSDP(rtpPort)
+	// 构建 INVITE SDP（用与设备同子网的本地 IP 作为 RTP 回传地址）
+	sdp := s.buildInviteSDP(rtpPort, dev.IP)
 	subject := fmt.Sprintf("%s:0,%s:0", channelID, s.cfg.SIPServerID)
 
 	// 发送 INVITE
@@ -613,8 +613,9 @@ func (s *GB28181Service) InviteStream(ctx context.Context, channelID string) (in
 		IP:   net.ParseIP(dev.IP),
 		Port: dev.Port,
 	}
-	log.Printf("[GB28181] sending INVITE to %s:%d via %s (channel %s, RTP port %d)",
-		dev.IP, dev.Port, dev.Transport, channelID, rtpPort)
+	localIP := s.getLocalIPFor(dev.IP)
+	log.Printf("[GB28181] sending INVITE to %s:%d via %s (channel %s, RTP port %d, SDP IP %s)",
+		dev.IP, dev.Port, dev.Transport, channelID, rtpPort, localIP)
 	s.sendSIPRaw(inviteReq, addr, dev.Transport)
 
 	return rtpPort, nil
@@ -758,8 +759,8 @@ func (s *GB28181Service) queryDeviceCatalog(deviceID string) {
 	log.Printf("[GB28181] sent Catalog query to device %s", deviceID)
 }
 
-func (s *GB28181Service) buildInviteSDP(rtpPort int) string {
-	localIP := s.getLocalIP()
+func (s *GB28181Service) buildInviteSDP(rtpPort int, deviceIP string) string {
+	localIP := s.getLocalIPFor(deviceIP)
 	return fmt.Sprintf("v=0\r\n"+
 		"o=%s 0 0 IN IP4 %s\r\n"+
 		"s=Play\r\n"+
@@ -1011,10 +1012,38 @@ func buildSIPResponse(req string, status int, reason string, extraHeaders map[st
 // ---------- 辅助 ----------
 
 func (s *GB28181Service) getLocalIP() string {
+	return s.getLocalIPFor("")
+}
+
+// getLocalIPFor 获取本机 IP。若指定目标 IP，优先返回与目标同子网的接口 IP，
+// 否则返回第一个非回环 IPv4。
+func (s *GB28181Service) getLocalIPFor(target string) string {
+	var targetIP net.IP
+	if target != "" {
+		targetIP = net.ParseIP(target)
+	}
+
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return "127.0.0.1"
 	}
+
+	// 第一次遍历：找与目标同子网的接口
+	if targetIP != nil {
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+				ip4 := ipNet.IP.To4()
+				if ip4 == nil {
+					continue
+				}
+				if ipNet.Contains(targetIP) {
+					return ip4.String()
+				}
+			}
+		}
+	}
+
+	// 回退：第一个非回环 IPv4
 	for _, addr := range addrs {
 		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
 			if ipNet.IP.To4() != nil {
