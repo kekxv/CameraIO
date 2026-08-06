@@ -132,9 +132,9 @@ func downloadFFmpeg(destDir string) error {
 		return fmt.Errorf("不支持的平台: %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	log.Printf("[FFmpeg] 下载 %s ...", url)
+	log.Printf("[FFmpeg] 系统未安装 ffmpeg，正在从 %s 下载（请耐心等待，约几十MB）...", url)
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{Timeout: 600 * time.Second} // 10 分钟，大文件
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("下载请求失败: %w", err)
@@ -144,18 +144,48 @@ func downloadFFmpeg(destDir string) error {
 		return fmt.Errorf("下载返回 %s", resp.Status)
 	}
 
-	// 下载到临时文件
+	// 下载到临时文件，带进度日志
 	tmpFile := filepath.Join(destDir, filename)
 	f, err := os.Create(tmpFile)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		os.Remove(tmpFile)
-		return fmt.Errorf("写入失败: %w", err)
+
+	total := resp.ContentLength
+	written := int64(0)
+	buf := make([]byte, 256*1024)
+	lastLog := time.Now()
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := f.Write(buf[:n]); werr != nil {
+				f.Close()
+				os.Remove(tmpFile)
+				return fmt.Errorf("写入失败: %w", werr)
+			}
+			written += int64(n)
+			// 每 5 秒或每 ~20MB 打印一次进度
+			if time.Since(lastLog) >= 5*time.Second {
+				if total > 0 {
+					log.Printf("[FFmpeg] 下载进度: %d/%d MB (%.0f%%)",
+						written/1024/1024, total/1024/1024, float64(written)*100/float64(total))
+				} else {
+					log.Printf("[FFmpeg] 下载进度: %d MB", written/1024/1024)
+				}
+				lastLog = time.Now()
+			}
+		}
+		if rerr != nil {
+			if rerr != io.EOF {
+				f.Close()
+				os.Remove(tmpFile)
+				return fmt.Errorf("下载中断: %w", rerr)
+			}
+			break
+		}
 	}
 	f.Close()
+	log.Printf("[FFmpeg] 下载完成: %d MB，正在解压...", written/1024/1024)
 
 	// 解压
 	if err := extractArchive(tmpFile, destDir); err != nil {
