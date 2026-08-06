@@ -69,6 +69,14 @@ func NewGB28181Service(cfg *pkg.Config, db *gorm.DB, events *EventBus, streams *
 func (s *GB28181Service) Start() error {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
+	// 启动时将所有 GB28181 摄像头重置为离线（需重新注册后才会在线）
+	s.db.Model(&model.Camera{}).
+		Where("access_protocol = ?", model.ProtocolGB28181).
+		Updates(map[string]any{
+			"status":     model.CameraStatusOffline,
+			"last_error": "等待设备注册",
+		})
+
 	// 启动 UDP SIP 监听
 	udpAddr, err := net.ResolveUDPAddr("udp", s.cfg.SIPListenAddr)
 	if err != nil {

@@ -521,9 +521,9 @@
             >
               取消
             </button>
-            <!-- 编辑模式：测试按钮 -->
+            <!-- 编辑模式：测试按钮（仅 RTSP） -->
             <button
-              v-if="editingCamera"
+              v-if="editingCamera && editingCamera.access_protocol === 'rtsp'"
               type="button"
               @click="handleTest(editingCamera)"
               :disabled="testingId === editingCamera.id"
