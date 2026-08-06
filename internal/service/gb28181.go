@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -186,8 +190,24 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 	callID := parseSIPHeader(raw, "Call-ID")
 	cseq := parseSIPHeader(raw, "CSeq")
 
-	// 首次 REGISTER 返回 401 要求鉴权（简化：直接返回 200）
-	// 实际 GB28181 需要 WWW-Authenticate 质询
+	// 查询设备密码（复用摄像头记录里的 password 字段）
+	password := s.getDevicePassword(deviceID)
+
+	// 需要鉴权：无 Authorization 头 → 返回 401 质询
+	if password != "" {
+		authHeader := parseSIPHeader(raw, "Authorization")
+		if authHeader == "" {
+			s.sendUnauthorized(raw, remoteAddr, transport)
+			return
+		}
+		// 校验 Digest 摘要
+		if !validateDigest(authHeader, password, deviceID, s.cfg.SIPRealm) {
+			log.Printf("[GB28181] Device %s auth failed (wrong password)", deviceID)
+			s.sendUnauthorized(raw, remoteAddr, transport)
+			return
+		}
+	}
+
 	expires := parseExpires(raw)
 	if expires == 0 {
 		expires = 3600
@@ -232,6 +252,103 @@ func (s *GB28181Service) sendRegisterOK(req string, remoteAddr net.Addr, transpo
 		"Server":  "CameraIO/1.0",
 	})
 	s.sendSIPRaw(resp, remoteAddr, transport)
+}
+
+// ---------- SIP Digest 鉴权 ----------
+
+// getDevicePassword 查询 GB28181 设备的鉴权密码（复用摄像头记录的 password 字段）。
+// 未找到或未设置密码 → 返回空串（不鉴权）。
+func (s *GB28181Service) getDevicePassword(deviceID string) string {
+	var cam model.Camera
+	if err := s.db.Where("device_id = ? AND access_protocol = ?", deviceID, model.ProtocolGB28181).First(&cam).Error; err != nil {
+		return ""
+	}
+	return cam.Password
+}
+
+// sendUnauthorized 返回 401 + WWW-Authenticate Digest 质询。
+func (s *GB28181Service) sendUnauthorized(req string, remoteAddr net.Addr, transport string) {
+	nonce := generateSIPNonce()
+	resp := buildSIPResponse(req, 401, "Unauthorized", map[string]string{
+		"WWW-Authenticate": fmt.Sprintf(
+			`Digest realm="%s", nonce="%s", algorithm=MD5, qop="auth"`,
+			s.cfg.SIPRealm, nonce),
+		"Server": "CameraIO/1.0",
+	})
+	s.sendSIPRaw(resp, remoteAddr, transport)
+}
+
+// validateDigest 校验 Authorization Digest 摘要。
+// 支持 qop="auth"（含 nc/cnonce）和不带 qop 两种 RFC 2617 格式。
+func validateDigest(authHeader, password, username, realm string) bool {
+	params := parseDigestParams(authHeader)
+	if params == nil {
+		return false
+	}
+
+	respNonce := params["nonce"]
+	respURI := params["uri"]
+	response := params["response"]
+	authUser := params["username"]
+
+	if respNonce == "" || respURI == "" || response == "" {
+		return false
+	}
+	if authUser != "" && authUser != username {
+		return false
+	}
+
+	// HA1 = MD5(username:realm:password)，HA2 = MD5(method:uri)
+	ha1 := md5hex(username + ":" + realm + ":" + password)
+	ha2 := md5hex("REGISTER:" + respURI)
+
+	var expected string
+	if qop, hasQop := params["qop"]; hasQop && qop == "auth" {
+		// 带 qop: response = MD5(HA1:nonce:nc:cnonce:qop:HA2)
+		nc := params["nc"]
+		cnonce := params["cnonce"]
+		if nc == "" || cnonce == "" {
+			return false
+		}
+		expected = md5hex(ha1 + ":" + respNonce + ":" + nc + ":" + cnonce + ":" + qop + ":" + ha2)
+	} else {
+		// 无 qop: response = MD5(HA1:nonce:HA2)
+		expected = md5hex(ha1 + ":" + respNonce + ":" + ha2)
+	}
+	return strings.EqualFold(expected, response)
+}
+
+// parseDigestParams 解析 Digest Authorization 头的参数。
+// 支持带引号（username/realm/nonce/uri/response/cnonce）和不带引号（qop/nc/algorithm）的值。
+func parseDigestParams(header string) map[string]string {
+	// 格式: Digest username="...", realm="...", nonce="...", qop=auth, nc=00000001, ...
+	re := regexp.MustCompile(`(\w+)\s*=\s*(?:"([^"]*)"|([^,\s]+))`)
+	matches := re.FindAllStringSubmatch(header, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	params := make(map[string]string)
+	for _, m := range matches {
+		value := m[2] // 带引号
+		if value == "" {
+			value = m[3] // 不带引号
+		}
+		params[strings.ToLower(m[1])] = value
+	}
+	return params
+}
+
+// generateSIPNonce 生成带时间戳的随机 nonce。
+func generateSIPNonce() string {
+	ts := fmt.Sprintf("%x", time.Now().Unix())
+	randPart := fmt.Sprintf("%x", rand.Int63())
+	return ts + randPart
+}
+
+// md5hex 计算 MD5 的十六进制字符串。
+func md5hex(s string) string {
+	h := md5.Sum([]byte(s))
+	return hex.EncodeToString(h[:])
 }
 
 // ---------- MESSAGE（心跳 / 目录 / PTZ） ----------

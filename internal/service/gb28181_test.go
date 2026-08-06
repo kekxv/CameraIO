@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -333,5 +334,105 @@ func TestBuildDeviceInfoResponse(t *testing.T) {
 	}
 	if !strings.Contains(resp, "34020000001320000001") {
 		t.Errorf("response missing deviceID: %s", resp)
+	}
+}
+
+// ---------- SIP Digest 鉴权测试 ----------
+
+func TestMD5Hex(t *testing.T) {
+	// MD5("") = d41d8cd98f00b204e9800998ecf8427e
+	if md5hex("") != "d41d8cd98f00b204e9800998ecf8427e" {
+		t.Errorf("md5hex empty wrong: %s", md5hex(""))
+	}
+}
+
+func TestParseDigestParams(t *testing.T) {
+	header := `Digest username="34020000001320000001", realm="3402000000", nonce="abc123", uri="sip:34020000002000000001@3402000000", response="def456", algorithm=MD5`
+	params := parseDigestParams(header)
+	if params == nil {
+		t.Fatal("params should not be nil")
+	}
+	if params["username"] != "34020000001320000001" {
+		t.Errorf("username = %q", params["username"])
+	}
+	if params["realm"] != "3402000000" {
+		t.Errorf("realm = %q", params["realm"])
+	}
+	if params["nonce"] != "abc123" {
+		t.Errorf("nonce = %q", params["nonce"])
+	}
+	if params["uri"] != "sip:34020000002000000001@3402000000" {
+		t.Errorf("uri = %q", params["uri"])
+	}
+	if params["response"] != "def456" {
+		t.Errorf("response = %q", params["response"])
+	}
+}
+
+func TestValidateDigest(t *testing.T) {
+	username := "34020000001320000001"
+	realm := "3402000000"
+	password := "testpass123"
+	nonce := "abc123"
+	uri := "sip:34020000002000000001@3402000000"
+
+	// 计算正确的 response
+	ha1 := md5hex(username + ":" + realm + ":" + password)
+	ha2 := md5hex("REGISTER:" + uri)
+	response := md5hex(ha1 + ":" + nonce + ":" + ha2)
+
+	authHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", algorithm=MD5`,
+		username, realm, nonce, uri, response)
+
+	// 正确密码 → 通过
+	if !validateDigest(authHeader, password, username, realm) {
+		t.Error("correct password should validate")
+	}
+
+	// 错误密码 → 失败
+	if validateDigest(authHeader, "wrongpass", username, realm) {
+		t.Error("wrong password should fail")
+	}
+
+	// 错误 nonce → 失败
+	badNonceHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="badnonce", uri="%s", response="%s", algorithm=MD5`,
+		username, realm, uri, response)
+	if validateDigest(badNonceHeader, password, username, realm) {
+		t.Error("wrong nonce should fail")
+	}
+
+	// 空参数 → 失败
+	if validateDigest("", password, username, realm) {
+		t.Error("empty auth header should fail")
+	}
+	if validateDigest(`Digest username="x"`, password, username, realm) {
+		t.Error("missing params should fail")
+	}
+
+	// qop="auth" 情况（带 nc/cnonce）
+	qopNc := "00000001"
+	qopCnonce := "0a4f113b"
+	qopResponse := md5hex(ha1 + ":" + nonce + ":" + qopNc + ":" + qopCnonce + ":auth:" + ha2)
+	qopHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=auth, nc=%s, cnonce="%s", algorithm=MD5`,
+		username, realm, nonce, uri, qopResponse, qopNc, qopCnonce)
+	if !validateDigest(qopHeader, password, username, realm) {
+		t.Error("qop=auth digest should validate")
+	}
+	// qop 但缺少 cnonce/nc → 失败
+	qopBadHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=auth, algorithm=MD5`,
+		username, realm, nonce, uri, qopResponse)
+	if validateDigest(qopBadHeader, password, username, realm) {
+		t.Error("qop without cnonce/nc should fail")
+	}
+}
+
+func TestGenerateSIPNonce(t *testing.T) {
+	n1 := generateSIPNonce()
+	n2 := generateSIPNonce()
+	if n1 == "" || n2 == "" {
+		t.Fatal("nonce should not be empty")
+	}
+	if n1 == n2 {
+		t.Error("nonces should be unique")
 	}
 }

@@ -390,7 +390,7 @@
             <div class="bg-blue-50 border border-blue-200 rounded-md px-3 py-2 text-xs text-blue-700">
               <strong>提示：</strong>配置后，请在摄像头国标设置中填入：
               服务器 IP = CameraIO IP，端口 = 5060，
-              服务器编码 = 34020000002000000001
+              服务器编码 = 34020000002000000001，密码 = 下方设置的密码
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">设备编码 (20 位) *</label>
@@ -403,6 +403,15 @@
               <input v-model="form.channel_id" type="text" maxlength="20"
                 class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
                 placeholder="34020000001320000001" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">
+                密码
+                <span class="text-xs text-slate-400 ml-1">国标鉴权密码，需与设备端一致</span>
+              </label>
+              <input v-model="form.password" type="password"
+                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                placeholder="国标 SIP 鉴权密码" />
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">流传输协议</label>
