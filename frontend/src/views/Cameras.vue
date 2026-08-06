@@ -428,7 +428,9 @@
             <div class="bg-blue-50 border border-blue-200 rounded-md px-3 py-2 text-xs text-blue-700">
               <strong>提示：</strong>配置后，请在摄像头国标设置中填入：
               服务器 IP = CameraIO IP，端口 = 5060，
-              服务器编码 = 34020000002000000001，密码 = 下方设置的密码
+              服务器 ID = 34020000002000000001，
+              服务器域 = 3402000000，
+              密码 = 下方设置的密码
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">设备编码 (20 位) *</label>
