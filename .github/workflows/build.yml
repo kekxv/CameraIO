@@ -173,72 +173,8 @@ jobs:
           name: cameraio-windows-amd64
           path: dist/cameraio-windows-amd64.zip
 
-  # ===========================================
-  # macOS 构建 (universal: amd64 + arm64)
-  # ===========================================
-  build-macos:
-    name: macOS (universal)
-    needs: test
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Build frontend (needed for //go:embed)
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.20'
-          cache: true
-
-      - name: Build backend (Intel)
-        env:
-          GOOS: darwin
-          GOARCH: amd64
-          CGO_ENABLED: 1
-        run: |
-          go build -ldflags="-s -w" -o cameraio-darwin-amd64 ./cmd/server/
-          go build -ldflags="-s -w" -o localcam-darwin-amd64 ./cmd/localcam/
-
-      - name: Build backend (Apple Silicon)
-        env:
-          GOOS: darwin
-          GOARCH: arm64
-          CGO_ENABLED: 1
-        run: |
-          go build -ldflags="-s -w" -o cameraio-darwin-arm64 ./cmd/server/
-          go build -ldflags="-s -w" -o localcam-darwin-arm64 ./cmd/localcam/
-
-      - name: Create universal binary
-        run: |
-          lipo -create -output cameraio cameraio-darwin-amd64 cameraio-darwin-arm64
-          lipo -create -output localcam localcam-darwin-amd64 localcam-darwin-arm64
-
-      - name: Package
-        run: |
-          mkdir -p dist/cameraio-macos-universal
-          cp cameraio dist/cameraio-macos-universal/
-          cp localcam dist/cameraio-macos-universal/
-          cp README.md API.md dist/cameraio-macos-universal/ || true
-          cd dist && tar -czf cameraio-macos-universal.tar.gz cameraio-macos-universal
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: cameraio-macos-universal
-          path: dist/cameraio-macos-universal.tar.gz
+  # macOS universal build is paused to avoid macOS runner costs.
+  # Re-enable it from Git history when macOS artifacts are needed again.
 
   # ===========================================
   # 发布 (仅 tag 触发)
@@ -246,7 +182,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
