@@ -291,6 +291,26 @@
               </div>
             </div>
 
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">用户名</label>
+                <input
+                  v-model="form.username"
+                  type="text"
+                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder="admin"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">密码</label>
+                <input
+                  v-model="form.password"
+                  type="password"
+                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+            </div>
+
             <!-- 测试连接按钮 -->
             <div v-if="form.ip && (form.username || form.password)" class="flex items-center gap-2">
               <button
@@ -339,7 +359,8 @@
               <button
                 type="button"
                 @click="handleDiscoverChannels"
-                :disabled="discovering"
+                :disabled="discovering || !form.ip || !form.username || !form.password"
+                :title="!form.ip || !form.username || !form.password ? '请先填写 IP、用户名和密码' : ''"
                 class="px-3 py-1.5 text-xs bg-purple-50 border border-purple-200 text-purple-700 rounded hover:bg-purple-100 transition-colors disabled:opacity-50"
               >
                 {{ discovering ? '扫描中...' : '🔍 扫描 NVR 通道' }}
@@ -377,26 +398,6 @@
 
           <!-- RTSP 专属字段 -->
           <template v-if="form.access_protocol === 'rtsp'">
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">用户名</label>
-                <input
-                  v-model="form.username"
-                  type="text"
-                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  placeholder="admin"
-                />
-              </div>
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">密码</label>
-                <input
-                  v-model="form.password"
-                  type="password"
-                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-            </div>
-
             <!-- 码流选择 -->
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">码流类型</label>
