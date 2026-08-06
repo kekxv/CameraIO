@@ -58,14 +58,16 @@ CameraIO 是一款高吞吐、极低延迟、API 优先的轻量级软件 NVR，
 
 ### 编译
 
+前端通过 `//go:embed` 直接打进 Go 二进制，因此 **必须先构建前端再编译后端**（`go build`/`go test` 都依赖 `frontend/dist` 存在）。
+
 ```bash
 # 1. 构建前端
 cd frontend && npm install && npm run build && cd ..
 
-# 2. 编译后端（自动包含前端产物）
+# 2. 编译后端（内嵌前端产物，生成自包含单文件）
 CGO_ENABLED=1 go build -o cameraio ./cmd/server/
 
-# 运行
+# 运行（单文件即可，任意工作目录下均能访问 WebUI）
 ./cameraio
 # 访问 http://localhost:8080
 ```
@@ -94,13 +96,17 @@ cd frontend && npm run dev
 | `CAMERAIO_SIP_REALM` | `3402000000` | SIP 域 |
 | `CAMERAIO_RTP_PORT_MIN` | `10000` | RTP 端口范围下限 |
 | `CAMERAIO_RTP_PORT_MAX` | `11000` | RTP 端口范围上限 |
+| `CAMERAIO_CONFIG` | `config.json` | 配置文件路径（不存在则自动创建默认配置） |
+
+配置优先级：环境变量 > 配置文件 > 内置默认值。
 
 ### 首次运行
 
 系统会自动：
-1. 创建 SQLite 数据库并建表
-2. 创建默认管理员账户 `admin / admin`
-3. 启动 HTTP 服务
+1. 检查配置文件 `config.json`，不存在则用默认值创建
+2. 创建 SQLite 数据库并建表
+3. 创建默认管理员账户 `admin / admin`
+4. 启动 HTTP 服务，控制台打印 WebUI 访问地址（如 `http://localhost:8080`），用浏览器打开即可
 
 ## 项目结构
 

@@ -182,6 +182,7 @@ func isExecutable(path string) bool {
 }
 
 // downloadFFmpeg 下载适合当前平台的 FFmpeg。
+// 若本地已存在完整有效的安装包（上次下载中断/解压失败遗留），直接解压复用，避免重新下载。
 func downloadFFmpeg(destDir string) error {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
@@ -190,6 +191,25 @@ func downloadFFmpeg(destDir string) error {
 	url, filename := downloadInfo()
 	if url == "" {
 		return fmt.Errorf("不支持的平台: %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	archivePath := filepath.Join(destDir, filename)
+
+	// 1. 本地已有完整有效的安装包 → 直接解压复用，不重新下载
+	if validateArchive(archivePath) {
+		log.Printf("[FFmpeg] 本地已存在完整安装包 %s，跳过下载，直接解压...", filename)
+		setStatus(FFmpegStatus{State: "extracting", Progress: 100})
+		if err := extractArchive(archivePath, destDir); err != nil {
+			return fmt.Errorf("解压本地安装包失败: %w", err)
+		}
+		return makeExecutable(destDir)
+	}
+	// 2. 残留的损坏/不完整安装包 → 删除后重新下载
+	if st, err := os.Stat(archivePath); err == nil && !st.IsDir() {
+		log.Printf("[FFmpeg] 本地安装包无效（下载不完整或已损坏），删除后重新下载: %s", filename)
+		if err := os.Remove(archivePath); err != nil {
+			log.Printf("[FFmpeg] 删除无效安装包失败: %v", err)
+		}
 	}
 
 	log.Printf("[FFmpeg] 系统未安装 ffmpeg，正在从 %s 下载（请耐心等待，约几十MB）...", url)
@@ -204,9 +224,8 @@ func downloadFFmpeg(destDir string) error {
 		return fmt.Errorf("下载返回 %s", resp.Status)
 	}
 
-	// 下载到临时文件，带进度日志
-	tmpFile := filepath.Join(destDir, filename)
-	f, err := os.Create(tmpFile)
+	// 下载到安装包文件（覆盖旧的残留文件），带进度日志
+	f, err := os.Create(archivePath)
 	if err != nil {
 		return err
 	}
@@ -220,7 +239,7 @@ func downloadFFmpeg(destDir string) error {
 		if n > 0 {
 			if _, werr := f.Write(buf[:n]); werr != nil {
 				f.Close()
-				os.Remove(tmpFile)
+				os.Remove(archivePath)
 				return fmt.Errorf("写入失败: %w", werr)
 			}
 			written += int64(n)
@@ -244,7 +263,7 @@ func downloadFFmpeg(destDir string) error {
 		if rerr != nil {
 			if rerr != io.EOF {
 				f.Close()
-				os.Remove(tmpFile)
+				os.Remove(archivePath)
 				return fmt.Errorf("下载中断: %w", rerr)
 			}
 			break
@@ -255,22 +274,69 @@ func downloadFFmpeg(destDir string) error {
 	log.Printf("[FFmpeg] 下载完成: %d MB，正在解压...", written/1024/1024)
 
 	// 解压
-	if err := extractArchive(tmpFile, destDir); err != nil {
+	if err := extractArchive(archivePath, destDir); err != nil {
 		return fmt.Errorf("解压失败: %w", err)
 	}
 
-	// 清理临时文件
-	os.Remove(tmpFile)
+	// 安装包作为缓存保留，供下次启动复用（避免重新下载）
+	return makeExecutable(destDir)
+}
 
-	// 设置可执行权限
-	if runtime.GOOS != "windows" {
-		for _, name := range []string{"ffmpeg", "ffprobe"} {
-			p := filepath.Join(destDir, name)
-			os.Chmod(p, 0o755)
+// makeExecutable 设置 ffmpeg/ffprobe 可执行权限（Windows 无需设置）。
+func makeExecutable(destDir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	for _, name := range []string{"ffmpeg", "ffprobe"} {
+		p := filepath.Join(destDir, name)
+		if err := os.Chmod(p, 0o755); err != nil {
+			return err
 		}
 	}
-
 	return nil
+}
+
+// validateArchive 检查本地安装包是否完整可用：结构有效且包含 ffmpeg/ffprobe。
+func validateArchive(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() || info.Size() == 0 {
+		return false
+	}
+	lower := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lower, ".zip"):
+		// 截断/损坏的 zip 无法读取中央目录，zip.OpenReader 会返回错误
+		zr, err := zip.OpenReader(path)
+		if err != nil {
+			return false
+		}
+		defer zr.Close()
+		hasFFmpeg, hasFFprobe := false, false
+		for _, zf := range zr.File {
+			switch filepath.Base(zf.Name) {
+			case "ffmpeg", "ffmpeg.exe":
+				hasFFmpeg = true
+			case "ffprobe", "ffprobe.exe":
+				hasFFprobe = true
+			}
+		}
+		return hasFFmpeg && hasFFprobe
+	case strings.HasSuffix(lower, ".tar.xz"):
+		return tarCanList(path, "-tJf")
+	case strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz"):
+		return tarCanList(path, "-tzf")
+	case strings.HasSuffix(lower, ".tar.bz2"):
+		return tarCanList(path, "-tjf")
+	}
+	return false
+}
+
+// tarCanList 用系统 tar 列出压缩包内容，能成功列出说明结构完整。
+func tarCanList(path, flag string) bool {
+	cmd := exec.Command("tar", flag, path)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
 }
 
 // downloadInfo 返回当前平台的下载 URL 和文件名。

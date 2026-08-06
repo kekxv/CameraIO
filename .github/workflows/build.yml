@@ -19,6 +19,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend (needed for //go:embed)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -46,6 +59,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend (needed for //go:embed)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -77,19 +103,11 @@ jobs:
         run: |
           go build -ldflags="-s -w" -o localcam-linux-${{ matrix.arch }} ./cmd/localcam/
 
-      - name: Build frontend
-        if: matrix.arch == 'amd64'
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
       - name: Package
         run: |
           mkdir -p dist/cameraio-linux-${{ matrix.arch }}
           cp cameraio-linux-${{ matrix.arch }} dist/cameraio-linux-${{ matrix.arch }}/cameraio
           cp localcam-linux-${{ matrix.arch }} dist/cameraio-linux-${{ matrix.arch }}/localcam
-          [ -d frontend/dist ] && cp -r frontend/dist dist/cameraio-linux-${{ matrix.arch }}/frontend
           cp README.md API.md dist/cameraio-linux-${{ matrix.arch }}/ || true
           cd dist && tar -czf cameraio-linux-${{ matrix.arch }}.tar.gz cameraio-linux-${{ matrix.arch }}
 
@@ -110,6 +128,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend (needed for //go:embed)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -121,26 +152,17 @@ jobs:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: 1
-          # Win7 兼容: 设置最低子系统版本
-          LDFLAGS: -s -w -H=windowsgui
+          # 控制台模式：双击 exe 可看到运行日志（不隐藏控制台窗口）
+          LDFLAGS: -s -w
         run: |
           go build -ldflags="$env:LDFLAGS" -o cameraio.exe ./cmd/server/
           go build -ldflags="-s -w" -o localcam.exe ./cmd/localcam/
-
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
 
       - name: Package
         run: |
           New-Item -ItemType Directory -Force -Path dist/cameraio-windows-amd64
           Copy-Item cameraio.exe dist/cameraio-windows-amd64/
           Copy-Item localcam.exe dist/cameraio-windows-amd64/
-          if (Test-Path frontend/dist) {
-            Copy-Item -Recurse frontend/dist dist/cameraio-windows-amd64/frontend
-          }
           Copy-Item README.md dist/cameraio-windows-amd64/ -ErrorAction SilentlyContinue
           Copy-Item API.md dist/cameraio-windows-amd64/ -ErrorAction SilentlyContinue
           Compress-Archive -Path dist/cameraio-windows-amd64 -DestinationPath dist/cameraio-windows-amd64.zip
@@ -161,6 +183,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend (needed for //go:embed)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -191,18 +226,11 @@ jobs:
           lipo -create -output cameraio cameraio-darwin-amd64 cameraio-darwin-arm64
           lipo -create -output localcam localcam-darwin-amd64 localcam-darwin-arm64
 
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
       - name: Package
         run: |
           mkdir -p dist/cameraio-macos-universal
           cp cameraio dist/cameraio-macos-universal/
           cp localcam dist/cameraio-macos-universal/
-          [ -d frontend/dist ] && cp -r frontend/dist dist/cameraio-macos-universal/frontend
           cp README.md API.md dist/cameraio-macos-universal/ || true
           cd dist && tar -czf cameraio-macos-universal.tar.gz cameraio-macos-universal
 

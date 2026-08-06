@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -89,6 +90,11 @@ func main() {
 		}
 	}()
 
+	// 打印 WebUI 访问地址（控制台模式下方便用户手动打开浏览器）
+	if url := webUIURL(cfg.Addr); url != "" {
+		log.Printf("WebUI: %s", url)
+	}
+
 	// 等待退出信号
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -114,3 +120,22 @@ func main() {
 
 	log.Println("CameraIO 已关闭")
 }
+
+// webUIURL 根据监听地址构造 WebUI 访问 URL。无法确定时返回空字符串。
+func webUIURL(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" || addr == ":0" {
+		return ""
+	}
+	host := addr
+	switch {
+	case strings.HasPrefix(addr, ":"): // 如 ":8080"
+		host = "localhost" + addr
+	case strings.HasPrefix(addr, "0.0.0.0:"): // 监听所有网卡
+		host = "localhost" + addr[len("0.0.0.0"):]
+	case strings.HasPrefix(addr, "[::]:"): // IPv6 通配
+		host = "localhost" + addr[len("[::]"):]
+	}
+	return "http://" + host
+}
+
