@@ -32,6 +32,7 @@ type GB28181Service struct {
 	devices    map[string]*DeviceSession    // deviceID → session
 	rtpPorts   atomic.Int32                 // 下一个可用 RTP 端口
 	rtpRecvs   map[int]*RTPReceiver         // port → RTP 接收器
+	tcpConns   map[string]net.Conn         // 远端地址 → TCP 连接（用于发送 SIP 响应）
 
 	udpConn  *net.UDPConn
 	tcpLn    net.Listener
@@ -58,6 +59,7 @@ func NewGB28181Service(cfg *pkg.Config, db *gorm.DB, events *EventBus, streams *
 		streams:  streams,
 		devices:  make(map[string]*DeviceSession),
 		rtpRecvs: make(map[int]*RTPReceiver),
+		tcpConns: make(map[string]net.Conn),
 	}
 	s.rtpPorts.Store(int32(cfg.RTPPortMin))
 	return s
@@ -146,6 +148,17 @@ func (s *GB28181Service) acceptTCPLoop() {
 
 func (s *GB28181Service) handleTCPConn(conn net.Conn) {
 	defer conn.Close()
+	remoteAddr := conn.RemoteAddr().String()
+	// 存储 TCP 连接，用于主动发送 SIP 响应
+	s.mu.Lock()
+	s.tcpConns[remoteAddr] = conn
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.tcpConns, remoteAddr)
+		s.mu.Unlock()
+	}()
+
 	buf := make([]byte, 65536)
 	for {
 		conn.SetReadDeadline(time.Now().Add(120 * time.Second))
@@ -154,8 +167,7 @@ func (s *GB28181Service) handleTCPConn(conn net.Conn) {
 			return
 		}
 		msg := string(buf[:n])
-		remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
-		s.handleSIPMessage(msg, remoteAddr, "TCP")
+		s.handleSIPMessage(msg, conn.RemoteAddr(), "TCP")
 	}
 }
 
@@ -583,7 +595,26 @@ func (s *GB28181Service) startRTPReceiver(port int, cameraID uint) error {
 				stream.pps = make([]byte, len(nalu))
 				copy(stream.pps, nalu)
 			case 5: // IDR
-				// 提取 JPEG（可选，用于 MJPEG 预览）
+				// 提取 JPEG 用于 MJPEG 预览（节流，避免 FFmpeg 进程堆积）
+				if s.streams != nil {
+					stream.extractMu.Lock()
+					shouldExtract := !stream.extracting && time.Since(stream.lastExtractAt) >= 800*time.Millisecond
+					if shouldExtract {
+						stream.extracting = true
+						stream.lastExtractAt = time.Now()
+					}
+					stream.extractMu.Unlock()
+					if shouldExtract {
+						go func() {
+							defer func() {
+								stream.extractMu.Lock()
+								stream.extracting = false
+								stream.extractMu.Unlock()
+							}()
+							s.streams.extractJPEG(stream, nalu)
+						}()
+					}
+				}
 			}
 
 			// 广播给所有订阅者
@@ -713,8 +744,16 @@ func (s *GB28181Service) sendSIPRaw(msg string, remoteAddr net.Addr, transport s
 	case *net.UDPAddr:
 		s.udpConn.WriteToUDP([]byte(msg), addr)
 	case *net.TCPAddr:
-		// 简化处理：对 TCP 连接不主动发送（需要维护连接池）
-		log.Printf("[GB28181] TCP response not implemented for active send")
+		// 通过已维护的 TCP 连接发送
+		s.mu.RLock()
+		conn, ok := s.tcpConns[addr.String()]
+		s.mu.RUnlock()
+		if !ok {
+			log.Printf("[GB28181] TCP connection to %s not found", addr.String())
+			return
+		}
+		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		_, _ = conn.Write([]byte(msg))
 	}
 }
 

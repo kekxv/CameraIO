@@ -25,6 +25,7 @@ type StreamService struct {
 	db      *gorm.DB
 	mu      sync.RWMutex
 	streams map[uint]*Stream // cameraID → Stream
+	gb28181 *GB28181Service  // 用于 GB28181 摄像头 SIP INVITE
 }
 
 func NewStreamService(db *gorm.DB) *StreamService {
@@ -32,6 +33,11 @@ func NewStreamService(db *gorm.DB) *StreamService {
 		db:      db,
 		streams: make(map[uint]*Stream),
 	}
+}
+
+// SetGB28181 注入 GB28181 服务（用于 GB28181 摄像头的点播）。
+func (s *StreamService) SetGB28181(g *GB28181Service) {
+	s.gb28181 = g
 }
 
 // ---------- Stream ----------
@@ -102,11 +108,34 @@ func (s *StreamService) StartStream(cameraID uint) error {
 		Camera:    &cam,
 		ctx:       ctx,
 		cancel:    cancel,
+		Codec:     "h264",
 		naluSubs:  make(map[int]chan NALU),
 		mjpegDone: make(chan struct{}),
 		done:      make(chan struct{}),
 	}
 	s.streams[cameraID] = stream
+
+	// GB28181: 通过 SIP INVITE 获取 RTP 流，不启动 FFmpeg 拉流/转码
+	if cam.AccessProtocol == model.ProtocolGB28181 {
+		// 停止时关闭 done（RTP 接收器由 GB28181 服务管理）
+		go func() {
+			<-ctx.Done()
+			close(stream.done)
+		}()
+		if s.gb28181 != nil {
+			channelID := cam.ChannelID
+			if channelID == "" {
+				channelID = cam.DeviceID
+			}
+			go func() {
+				_, err := s.gb28181.InviteStream(ctx, channelID)
+				if err != nil {
+					log.Printf("[stream] camera %d gb28181 invite failed: %v", cameraID, err)
+				}
+			}()
+		}
+		return nil
+	}
 
 	go s.runPuller(stream)
 	// 持续 MJPEG 转码器（10+ FPS），供预览使用
