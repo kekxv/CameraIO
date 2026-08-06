@@ -19,6 +19,8 @@ type DiscoveryService struct {
 	onvif *ONVIFService
 }
 
+const scanDialTimeout = time.Second
+
 func NewDiscoveryService(onvif *ONVIFService) *DiscoveryService {
 	return &DiscoveryService{onvif: onvif}
 }
@@ -189,15 +191,15 @@ func (s *DiscoveryService) tcpScan(ctx context.Context, ips []string) []Discover
 
 			r := result{ip: ip}
 			// 探测 HTTP 端口 (80)
-			if probeTCPPort(ip, 80, 200*time.Millisecond) == nil {
+			if probeTCPPort(ip, 80, scanDialTimeout) == nil {
 				r.http = true
 			}
 			// 探测海康端口 (8000)
-			if probeTCPPort(ip, 8000, 200*time.Millisecond) == nil {
+			if probeTCPPort(ip, 8000, scanDialTimeout) == nil {
 				r.hik = true
 			}
 			// 探测 RTSP 端口 (554)
-			if probeTCPPort(ip, 554, 200*time.Millisecond) == nil {
+			if probeTCPPort(ip, 554, scanDialTimeout) == nil {
 				r.rtsp = true
 			}
 
@@ -312,6 +314,14 @@ func (s *DiscoveryService) probeHTTP(ctx context.Context, dev *DiscoveredDevice)
 		}
 		data, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if isUniviewSignature(resp.Header, string(data)) {
+			dev.Brand = "uniview"
+			dev.HTTPPort = port
+			dev.Manufacturer = "Uniview"
+			dev.RTSPEnabled = true
+			dev.RTSPUrl = fmt.Sprintf("rtsp://%s:554/unicast/c1/s0/live", dev.IP)
+			return
+		}
 
 		if resp.StatusCode == 200 || resp.StatusCode == 401 {
 			// ISAPI 存在 = 海康设备（401 表示需要认证但端点存在）
@@ -340,6 +350,14 @@ func (s *DiscoveryService) probeHTTP(ctx context.Context, dev *DiscoveredDevice)
 		}
 		data2, _ := io.ReadAll(resp2.Body)
 		resp2.Body.Close()
+		if isUniviewSignature(resp2.Header, string(data2)) {
+			dev.Brand = "uniview"
+			dev.HTTPPort = port
+			dev.Manufacturer = "Uniview"
+			dev.RTSPEnabled = true
+			dev.RTSPUrl = fmt.Sprintf("rtsp://%s:554/unicast/c1/s0/live", dev.IP)
+			return
+		}
 		if resp2.StatusCode == 200 {
 			body := strings.ToLower(string(data2))
 			if strings.Contains(body, "hikvision") || strings.Contains(body, "hikvisi") || strings.Contains(body, "dna_nvr") {
@@ -503,6 +521,21 @@ func identifyBrand(onvifResp string, ip string) string {
 		}
 	}
 	return "custom"
+}
+
+// isUniviewSignature 仅匹配宇视特有的响应特征，避免把普通的 401 误判为宇视设备。
+func isUniviewSignature(headers http.Header, body string) bool {
+	values := []string{body}
+	for _, header := range []string{"Server", "WWW-Authenticate", "X-Device-Brand", "X-Device-Model"} {
+		values = append(values, headers.Values(header)...)
+	}
+	for _, value := range values {
+		lower := strings.ToLower(value)
+		if strings.Contains(lower, "uniview") || strings.Contains(lower, "unv") || strings.Contains(lower, "nvr301") {
+			return true
+		}
+	}
+	return false
 }
 
 // countProfileChannels 从 GetProfiles 响应中统计不同通道数。

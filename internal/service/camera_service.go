@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -150,6 +152,9 @@ func (s *CameraService) Create(in *CreateCameraInput) (*model.Camera, error) {
 			rtspURL = buildRTSPURL(in.Brand, in.Username, in.Password, in.IP, in.Port, in.NVRChannel, streamType)
 		}
 	}
+	if protocol == model.ProtocolRTSP {
+		rtspURL = ensureRTSPCredentials(rtspURL, in.Username, in.Password)
+	}
 	streamType := in.StreamType
 	if streamType == "" {
 		streamType = model.StreamTypeMain
@@ -266,6 +271,13 @@ func (s *CameraService) Update(id uint, in *UpdateCameraInput) (*model.Camera, e
 		if in.StreamType != nil { streamType = *in.StreamType }
 		if streamType == "" { streamType = model.StreamTypeMain }
 		updates["rtsp_url"] = buildRTSPURL(brand, user, pass, ip, port, ch, streamType)
+	}
+	if rtspURL, ok := updates["rtsp_url"].(string); ok {
+		user := camera.Username
+		if in.Username != nil { user = *in.Username }
+		pass := camera.Password
+		if in.Password != nil { pass = *in.Password }
+		updates["rtsp_url"] = ensureRTSPCredentials(rtspURL, user, pass)
 	}
 
 	if len(updates) == 0 {
@@ -419,9 +431,26 @@ func buildRTSPURL(brand, username, password, ip string, port int, channel int, s
 		path = fmt.Sprintf("/Streaming/Channels/%d", streamID)
 	}
 
-	p := strconv.Itoa(port)
-	if username == "" {
-		return "rtsp://" + ip + ":" + p + path
+	u := &url.URL{
+		Scheme: "rtsp",
+		Host:   net.JoinHostPort(ip, strconv.Itoa(port)),
+		Path:   path,
 	}
-	return "rtsp://" + username + ":" + password + "@" + ip + ":" + p + path
+	if username != "" {
+		u.User = url.UserPassword(username, password)
+	}
+	return u.String()
+}
+
+// ensureRTSPCredentials 为 ONVIF 等返回的无凭据 URI 注入已保存的摄像头凭据。
+func ensureRTSPCredentials(rawURL, username, password string) string {
+	if rawURL == "" || username == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "rtsp" || u.User != nil {
+		return rawURL
+	}
+	u.User = url.UserPassword(username, password)
+	return u.String()
 }

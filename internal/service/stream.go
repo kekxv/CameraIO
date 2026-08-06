@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -26,6 +27,34 @@ type StreamService struct {
 	mu      sync.RWMutex
 	streams map[uint]*Stream // cameraID → Stream
 	gb28181 *GB28181Service  // 用于 GB28181 摄像头 SIP INVITE
+}
+
+const ffmpegStderrLimit = 4 << 10
+
+// tailBuffer 仅保留写入内容的末尾，避免异常 FFmpeg 输出无限占用内存。
+type tailBuffer struct {
+	max  int
+	data []byte
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if b.max <= 0 {
+		return n, nil
+	}
+	if len(p) >= b.max {
+		b.data = append(b.data[:0], p[len(p)-b.max:]...)
+		return n, nil
+	}
+	if excess := len(b.data) + len(p) - b.max; excess > 0 {
+		b.data = append(b.data[:0], b.data[excess:]...)
+	}
+	b.data = append(b.data, p...)
+	return n, nil
+}
+
+func (b *tailBuffer) String() string {
+	return string(b.data)
 }
 
 func NewStreamService(db *gorm.DB) *StreamService {
@@ -296,6 +325,8 @@ func (s *StreamService) pullRTSP(st *Stream) error {
 	}
 
 	cmd := exec.CommandContext(st.ctx, pkg.FFmpegBinPath(), args...)
+	stderr := &tailBuffer{max: ffmpegStderrLimit}
+	cmd.Stderr = stderr
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -310,17 +341,12 @@ func (s *StreamService) pullRTSP(st *Stream) error {
 		<-st.ctx.Done()
 		cmd.Process.Kill()
 	}()
-	defer func() {
-		cmd.Process.Kill()
-		cmd.Wait()
-	}()
-
 	// 更新摄像头状态为在线
 	s.db.Model(&model.Camera{}).Where("id = ?", st.CameraID).Update("status", model.CameraStatusOnline)
 	defer s.db.Model(&model.Camera{}).Where("id = ?", st.CameraID).Update("status", model.CameraStatusOffline)
 
 	// 解析 raw H.264/HEVC Annex B 流
-	return s.parseH264Stream(st, stdout)
+	return waitForFFmpeg(st.ctx, cmd, s.parseH264Stream(st, stdout), stderr, st.Camera.RTSPUrl)
 }
 
 // detectVideoCodec 通过 ffprobe 检测 RTSP 流的视频编码格式。
@@ -423,9 +449,6 @@ func (s *StreamService) parseH264Stream(st *Stream, r io.Reader) error {
 						s.processNALU(st, pending[nalStart:])
 					}
 				}
-			}
-			if err == io.EOF {
-				return nil
 			}
 			return err
 		}
@@ -613,6 +636,8 @@ func (s *StreamService) transcodeMJPEG(st *Stream) error {
 		"pipe:1",
 	}
 	cmd := exec.CommandContext(st.ctx, pkg.FFmpegBinPath(), args...)
+	stderr := &tailBuffer{max: ffmpegStderrLimit}
+	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
@@ -626,12 +651,7 @@ func (s *StreamService) transcodeMJPEG(st *Stream) error {
 		<-st.ctx.Done()
 		cmd.Process.Kill()
 	}()
-	defer func() {
-		cmd.Process.Kill()
-		cmd.Wait()
-	}()
-
-	return s.parseMJPEGFrames(st, stdout)
+	return waitForFFmpeg(st.ctx, cmd, s.parseMJPEGFrames(st, stdout), stderr, st.Camera.RTSPUrl)
 }
 
 // parseMJPEGFrames 从 MJPEG 流中解析完整的 JPEG 帧（以 SOI/EOI 分隔）。
@@ -708,12 +728,51 @@ func (s *StreamService) parseMJPEGFrames(st *Stream, r io.Reader) error {
 		}
 
 		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
 			return err
 		}
 	}
+}
+
+// waitForFFmpeg 保留 FFmpeg 退出状态和 stderr，避免管道 EOF 被误记为成功。
+func waitForFFmpeg(ctx context.Context, cmd *exec.Cmd, parseErr error, stderr *tailBuffer, rtspURL string) error {
+	if parseErr != nil && !errors.Is(parseErr, io.EOF) && ctx.Err() == nil {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	diagnostics := strings.TrimSpace(redactRTSPCredentials(stderr.String(), rtspURL))
+	if waitErr != nil {
+		if diagnostics != "" {
+			return fmt.Errorf("ffmpeg exited: %w: %s", waitErr, diagnostics)
+		}
+		return fmt.Errorf("ffmpeg exited: %w", waitErr)
+	}
+	if parseErr != nil {
+		if diagnostics != "" {
+			return fmt.Errorf("ffmpeg output ended: %w: %s", parseErr, diagnostics)
+		}
+		return fmt.Errorf("ffmpeg output ended: %w", parseErr)
+	}
+	return errors.New("ffmpeg exited without an output error")
+}
+
+func redactRTSPCredentials(output, rtspURL string) string {
+	if rtspURL == "" {
+		return output
+	}
+	redacted := rtspURL
+	if u, err := url.Parse(rtspURL); err == nil && u.User != nil {
+		u.User = url.User("***")
+		redacted = u.String()
+	} else if schemeEnd := strings.Index(rtspURL, "://"); schemeEnd >= 0 {
+		if at := strings.LastIndex(rtspURL, "@"); at > schemeEnd+3 {
+			redacted = rtspURL[:schemeEnd+3] + "***@" + rtspURL[at+1:]
+		}
+	}
+	return strings.ReplaceAll(output, rtspURL, redacted)
 }
 
 // indexBytes 在 data 中查找子序列 sub 的起始索引。

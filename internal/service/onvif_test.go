@@ -223,6 +223,30 @@ func TestBuildRTSPURL_SubStream(t *testing.T) {
 	}
 }
 
+func TestBuildRTSPURL_EscapesCredentials(t *testing.T) {
+	got := buildRTSPURL(model.BrandUniview, "operator@site", "p@ss:/?#%", "192.168.14.33", 554, 1, model.StreamTypeMain)
+	want := "rtsp://operator%40site:p%40ss%3A%2F%3F%23%25@192.168.14.33:554/unicast/c1/s0/live"
+	if got != want {
+		t.Fatalf("buildRTSPURL() = %q, want %q", got, want)
+	}
+}
+
+func TestEnsureRTSPCredentials_AddsCredentialsToONVIFURI(t *testing.T) {
+	got := ensureRTSPCredentials("rtsp://192.168.14.33:554/unicast/c1/s0/live", "admin", "p@ss")
+	want := "rtsp://admin:p%40ss@192.168.14.33:554/unicast/c1/s0/live"
+	if got != want {
+		t.Fatalf("ensureRTSPCredentials() = %q, want %q", got, want)
+	}
+}
+
+func TestEnsureRTSPCredentials_PreservesExistingCredentials(t *testing.T) {
+	got := ensureRTSPCredentials("rtsp://viewer:existing@192.168.14.33:554/unicast/c1/s0/live", "admin", "replacement")
+	want := "rtsp://viewer:existing@192.168.14.33:554/unicast/c1/s0/live"
+	if got != want {
+		t.Fatalf("ensureRTSPCredentials() = %q, want %q", got, want)
+	}
+}
+
 // ---------- 海康 NVR 实际响应格式测试 ----------
 
 func TestInjectSecurityHeader_HikvisionNVRResponse(t *testing.T) {

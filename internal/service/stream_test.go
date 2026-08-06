@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"CameraIO/internal/model"
@@ -165,6 +168,20 @@ func TestIndexBytes(t *testing.T) {
 	// EOI 匹配
 	if got := indexBytes([]byte{0x01, 0xFF, 0xD9, 0x02}, eoi); got != 1 {
 		t.Errorf("expected 1, got %d", got)
+	}
+}
+
+func TestParseMJPEGFrames_ReturnsEOF(t *testing.T) {
+	err := NewStreamService(nil).parseMJPEGFrames(&Stream{}, strings.NewReader(""))
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("parseMJPEGFrames() error = %v, want io.EOF", err)
+	}
+}
+
+func TestParseH264Stream_ReturnsEOF(t *testing.T) {
+	err := NewStreamService(nil).parseH264Stream(&Stream{}, strings.NewReader(""))
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("parseH264Stream() error = %v, want io.EOF", err)
 	}
 }
 

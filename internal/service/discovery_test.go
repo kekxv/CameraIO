@@ -1,6 +1,7 @@
 package service
 
 import (
+	"net/http"
 	"testing"
 )
 
@@ -66,5 +67,17 @@ func TestCountProfileChannels(t *testing.T) {
 	got := countProfileChannels(body)
 	if got != 3 {
 		t.Errorf("expected 3 channels, got %d", got)
+	}
+}
+
+func TestIsUniviewSignature(t *testing.T) {
+	if !isUniviewSignature(http.Header{"Server": []string{"Uniview-Web"}}, "") {
+		t.Fatal("Uniview Server header should be recognized")
+	}
+	if !isUniviewSignature(http.Header{}, "<title>UNV NVR</title>") {
+		t.Fatal("UNV response body should be recognized")
+	}
+	if isUniviewSignature(http.Header{"WWW-Authenticate": []string{"Basic realm=\"Protected\""}}, "") {
+		t.Fatal("generic 401 must not be labelled Uniview")
 	}
 }
