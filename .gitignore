@@ -38,6 +38,7 @@ Thumbs.db
 # ---------- 编辑器/IDE ----------
 .idea/
 .vscode/
+.worktrees/
 *.swp
 *.swo
 *~
