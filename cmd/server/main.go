@@ -15,20 +15,26 @@ import (
 )
 
 func main() {
-	cfg := pkg.DefaultConfig()
+	cfg := pkg.LoadConfig()
 
 	// 确保记录目录存在
 	if err := os.MkdirAll(cfg.RecordingsDir, 0o755); err != nil {
 		log.Fatalf("create recordings dir: %v", err)
 	}
 
-	// 确保 FFmpeg 可用（自动下载或找到系统安装）
-	ffmpegPath, ffprobePath, err := pkg.EnsureFFmpeg()
-	if err != nil {
-		log.Printf("⚠️ FFmpeg 未找到: %v", err)
+	// 确保 FFmpeg 可用。若未安装则后台自动下载，不阻塞启动，
+	// 可在 Web 界面查看下载进度（GET /api/v1/system/ffmpeg）。
+	pkg.EnsureFFmpegAsync()
+	switch st := pkg.GetFFmpegStatus(); st.State {
+	case "installed":
+		log.Printf("FFmpeg: %s", st.Path)
+	case "downloading", "extracting":
+		log.Printf("⚠️ FFmpeg 未安装，后台自动下载中，可在 Web 界面查看进度。下载完成后流媒体功能可用。")
+	case "error":
+		log.Printf("⚠️ FFmpeg 未找到: %s", st.Error)
 		log.Printf("   流媒体功能将不可用。请安装 FFmpeg 或设置 CAMERAIO_FFMPEG_PATH 环境变量")
-	} else {
-		log.Printf("FFmpeg: %s, FFprobe: %s", ffmpegPath, ffprobePath)
+	default:
+		log.Printf("⚠️ FFmpeg 状态未知: %s", st.State)
 	}
 
 	// 初始化数据库

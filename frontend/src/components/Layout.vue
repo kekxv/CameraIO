@@ -39,8 +39,11 @@
     </aside>
 
     <!-- 主内容区 -->
-    <main class="flex-1 overflow-auto">
-      <router-view />
+    <main class="flex-1 overflow-auto flex flex-col">
+      <FfmpegBanner />
+      <div class="flex-1 overflow-auto">
+        <router-view />
+      </div>
     </main>
   </div>
 </template>
@@ -48,6 +51,7 @@
 <script setup>
 import { computed } from 'vue'
 import { getCurrentUser, logout } from '../api'
+import FfmpegBanner from './FfmpegBanner.vue'
 
 const navItems = [
   { to: '/cameras', label: '摄像头管理', icon: '📷' },

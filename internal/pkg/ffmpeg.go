@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,22 +22,50 @@ import (
 var (
 	ffmpegPath  string
 	ffprobePath string
+
+	statusMu sync.Mutex
+	status   FFmpegStatus
 )
 
-// EnsureFFmpeg 确保 ffmpeg 和 ffprobe 可用。返回两者的路径。
-func EnsureFFmpeg() (string, string, error) {
-	// 1. 检查环境变量覆盖
+// FFmpegStatus FFmpeg 可用性/下载状态（供前端展示）。
+type FFmpegStatus struct {
+	State      string `json:"state"` // "installed" / "downloading" / "extracting" / "error" / "checking"
+	Progress   int    `json:"progress"` // 0-100
+	Downloaded int64  `json:"downloaded_bytes"`
+	Total      int64  `json:"total_bytes"`
+	Path       string `json:"path"`
+	Error      string `json:"error"`
+}
+
+// setStatus 更新全局 FFmpeg 状态。
+func setStatus(s FFmpegStatus) {
+	statusMu.Lock()
+	status = s
+	statusMu.Unlock()
+}
+
+// GetFFmpegStatus 返回当前 FFmpeg 状态。
+func GetFFmpegStatus() FFmpegStatus {
+	statusMu.Lock()
+	defer statusMu.Unlock()
+	return status
+}
+
+// EnsureFFmpegAsync 确保 ffmpeg 可用。若不可用，则在后台启动下载（不阻塞启动）。
+// 返回是否立即可用。
+func EnsureFFmpegAsync() bool {
+	// 1. 环境变量
 	if envPath := os.Getenv("CAMERAIO_FFMPEG_PATH"); envPath != "" {
 		ffmpegPath = envPath
-		ffprobePath = envPath // 某些发行包中 ffmpeg 包含 ffprobe 功能
+		ffprobePath = envPath
 		if p := findAlongside(envPath, "ffprobe"); p != "" {
 			ffprobePath = p
 		}
-		log.Printf("[FFmpeg] 使用环境变量指定路径: %s", ffmpegPath)
-		return ffmpegPath, ffprobePath, nil
+		setStatus(FFmpegStatus{State: "installed", Path: ffmpegPath})
+		return true
 	}
 
-	// 2. 检查系统 PATH
+	// 2. 系统 PATH
 	if sysFFmpeg, err := exec.LookPath("ffmpeg"); err == nil {
 		ffmpegPath = sysFFmpeg
 		if sysFFprobe, err := exec.LookPath("ffprobe"); err == nil {
@@ -47,34 +76,63 @@ func EnsureFFmpeg() (string, string, error) {
 				ffprobePath = sysFFmpeg
 			}
 		}
-		log.Printf("[FFmpeg] 使用系统安装: %s", ffmpegPath)
-		return ffmpegPath, ffprobePath, nil
+		setStatus(FFmpegStatus{State: "installed", Path: ffmpegPath})
+		return true
 	}
 
-	// 3. 检查本地缓存
+	// 3. 本地缓存
 	binDir := filepath.Join("data", "bin")
 	localFFmpeg, localFFprobe := localPaths(binDir)
 	if isExecutable(localFFmpeg) {
 		ffmpegPath = localFFmpeg
 		ffprobePath = localFFprobe
-		log.Printf("[FFmpeg] 使用本地缓存: %s", ffmpegPath)
+		setStatus(FFmpegStatus{State: "installed", Path: ffmpegPath})
+		return true
+	}
+
+	// 4. 后台下载（不阻塞启动）
+	log.Printf("[FFmpeg] 系统未安装 ffmpeg，后台开始自动下载...")
+	setStatus(FFmpegStatus{State: "downloading", Progress: 0})
+	go func() {
+		if err := downloadFFmpeg(binDir); err != nil {
+			setStatus(FFmpegStatus{State: "error", Error: err.Error()})
+			log.Printf("[FFmpeg] 自动下载失败: %v", err)
+			return
+		}
+		statusMu.Lock()
+		ffmpegPath = localFFmpeg
+		ffprobePath = localFFprobe
+		statusMu.Unlock()
+		setStatus(FFmpegStatus{State: "installed", Progress: 100, Path: ffmpegPath})
+		log.Printf("[FFmpeg] 下载完成: %s", ffmpegPath)
+	}()
+	return false
+}
+
+// EnsureFFmpeg 确保 ffmpeg 和 ffprobe 可用（同步，阻塞直到完成）。用于测试和兼容。
+func EnsureFFmpeg() (string, string, error) {
+	if EnsureFFmpegAsync() {
 		return ffmpegPath, ffprobePath, nil
 	}
-
-	// 4. 自动下载
-	log.Printf("[FFmpeg] 系统未安装 ffmpeg，正在自动下载...")
-	if err := downloadFFmpeg(binDir); err != nil {
-		return "", "", fmt.Errorf("自动下载 FFmpeg 失败: %w (请手动安装 ffmpeg 或设置 CAMERAIO_FFMPEG_PATH 环境变量)", err)
+	// 等待后台下载完成
+	deadline := time.Now().Add(10 * time.Minute)
+	for time.Now().Before(deadline) {
+		st := GetFFmpegStatus()
+		if st.State == "installed" {
+			return ffmpegPath, ffprobePath, nil
+		}
+		if st.State == "error" {
+			return "", "", fmt.Errorf("自动下载 FFmpeg 失败: %s (请手动安装 ffmpeg 或设置 CAMERAIO_FFMPEG_PATH)", st.Error)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-
-	ffmpegPath = localFFmpeg
-	ffprobePath = localFFprobe
-	log.Printf("[FFmpeg] 下载完成: %s", ffmpegPath)
-	return ffmpegPath, ffprobePath, nil
+	return "", "", fmt.Errorf("FFmpeg 下载超时")
 }
 
 // FFmpegBinPath 返回已解析的 ffmpeg 路径（在 EnsureFFmpeg 之后调用）。
 func FFmpegBinPath() string {
+	statusMu.Lock()
+	defer statusMu.Unlock()
 	if ffmpegPath != "" {
 		return ffmpegPath
 	}
@@ -83,6 +141,8 @@ func FFmpegBinPath() string {
 
 // FFprobeBinPath 返回已解析的 ffprobe 路径。
 func FFprobeBinPath() string {
+	statusMu.Lock()
+	defer statusMu.Unlock()
 	if ffprobePath != "" {
 		return ffprobePath
 	}
@@ -164,6 +224,12 @@ func downloadFFmpeg(destDir string) error {
 				return fmt.Errorf("写入失败: %w", werr)
 			}
 			written += int64(n)
+			// 上报进度（供前端实时展示）
+			progress := 0
+			if total > 0 {
+				progress = int(float64(written) * 100 / float64(total))
+			}
+			setStatus(FFmpegStatus{State: "downloading", Progress: progress, Downloaded: written, Total: total})
 			// 每 5 秒或每 ~20MB 打印一次进度
 			if time.Since(lastLog) >= 5*time.Second {
 				if total > 0 {
@@ -185,6 +251,7 @@ func downloadFFmpeg(destDir string) error {
 		}
 	}
 	f.Close()
+	setStatus(FFmpegStatus{State: "extracting", Progress: 100, Downloaded: written, Total: total})
 	log.Printf("[FFmpeg] 下载完成: %d MB，正在解压...", written/1024/1024)
 
 	// 解压

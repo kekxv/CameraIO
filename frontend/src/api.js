@@ -104,6 +104,10 @@ export const createSchedule = (data) => api.post('/schedules', data).then((r) =>
 export const updateSchedule = (id, data) => api.put(`/schedules/${id}`, data).then((r) => r.data.data)
 export const deleteSchedule = (id) => api.delete(`/schedules/${id}`)
 
+// ---------- System ----------
+
+export const getFFmpegStatus = () => api.get('/system/ffmpeg').then((r) => r.data.data)
+
 // ---------- WebSocket ----------
 
 export const connectEventBus = (onMessage) => {

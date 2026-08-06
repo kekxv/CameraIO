@@ -41,6 +41,9 @@ func (h *Handler) SetupRouter() *gin.Engine {
 		// Local Cameras
 		protected.GET("/local-cameras", h.ListLocalCameras)
 
+		// System
+		protected.GET("/system/ffmpeg", h.GetFFmpegStatus)
+
 		// Streams
 		protected.POST("/streams/:id/start", h.StartStream)
 		protected.POST("/streams/:id/stop", h.StopStream)

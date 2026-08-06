@@ -28,6 +28,9 @@ frontend/dist/
 .env.local
 .env.*.local
 
+# 本地生成的配置文件（含 jwt_secret 等敏感项）
+config.json
+
 # ---------- 操作系统文件 ----------
 .DS_Store
 Thumbs.db
@@ -48,3 +51,4 @@ tmp/
 # ---------- 测试/覆盖率 ----------
 coverage.out
 *.coverprofile
+/backup.md

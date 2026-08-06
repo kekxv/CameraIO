@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"CameraIO/internal/model"
+	"CameraIO/internal/pkg"
 )
 
 // SystemMonitor 后台监控摄像头状态与系统指标，定期广播到 EventBus。
@@ -247,6 +248,7 @@ func (m *SystemMonitor) broadcastMetrics() {
 		"mem_alloc_mb":   float64(mem.Alloc) / 1024 / 1024,
 		"mem_sys_mb":     float64(mem.Sys) / 1024 / 1024,
 		"uptime_seconds": time.Since(startTime).Seconds(),
+		"ffmpeg":         pkg.GetFFmpegStatus(),
 	}
 
 	m.eventBus.PublishSystemMetrics(metrics)
