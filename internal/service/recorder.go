@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -312,16 +314,15 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 	return nil
 }
 
-// ReconcileOrphaned 清理孤儿录像记录：状态为 recording 但 FFmpeg 进程已不存在。
-// 服务启动时调用，修复因崩溃/强制退出导致的状态卡死。
+// ReconcileOrphaned 清理孤儿录像记录：状态为 recording/failed 但 FFmpeg 进程已不存在。
+// 服务启动时调用。文件有效则标记 completed（可下载查看），否则标记 failed。
 func (s *RecorderService) ReconcileOrphaned() {
 	var recs []model.Recording
-	if err := s.db.Where("status = ?", model.RecordingStatusRecording).Find(&recs).Error; err != nil {
+	if err := s.db.Where("status IN ?", []string{model.RecordingStatusRecording, model.RecordingStatusFailed}).Find(&recs).Error; err != nil {
 		log.Printf("[recorder] reconcile orphaned: %v", err)
 		return
 	}
 
-	now := time.Now()
 	for _, rec := range recs {
 		// 检查是否有活跃任务（内存中）
 		s.mu.Lock()
@@ -330,19 +331,52 @@ func (s *RecorderService) ReconcileOrphaned() {
 		if active {
 			continue // 仍在录制
 		}
-		// 孤儿记录：FFmpeg 已不在运行，标记为 failed
+
+		// 检查文件是否有效
 		var fileSize int64
 		if info, err := os.Stat(rec.FilePath); err == nil {
 			fileSize = info.Size()
 		}
-		s.db.Model(&rec).Updates(map[string]any{
-			"end_time":  now,
-			"file_size": fileSize,
-			"duration":  int(now.Sub(rec.StartTime).Seconds()),
-			"status":    model.RecordingStatusFailed,
-		})
-		log.Printf("[recorder] orphaned recording %d marked as failed (ffmpeg not running)", rec.ID)
+
+		if fileSize > 0 {
+			// 文件有效 → 标记 completed，用户可下载/查看
+			s.db.Model(&rec).Updates(map[string]any{
+				"end_time":  time.Now(),
+				"file_size": fileSize,
+				"duration":  probeVideoDuration(rec.FilePath),
+				"status":    model.RecordingStatusCompleted,
+			})
+			log.Printf("[recorder] orphaned recording %d recovered as completed (file valid, %d bytes)", rec.ID, fileSize)
+		} else if rec.Status == model.RecordingStatusRecording {
+			// 无有效文件且曾是 recording → failed
+			s.db.Model(&rec).Updates(map[string]any{
+				"end_time": time.Now(),
+				"status":   model.RecordingStatusFailed,
+			})
+			log.Printf("[recorder] orphaned recording %d marked as failed (no valid file)", rec.ID)
+		}
 	}
+}
+
+// probeVideoDuration 用 ffprobe 读取视频文件的实际时长（秒）。
+func probeVideoDuration(filePath string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, pkg.FFprobeBinPath(),
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		filePath,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil || f <= 0 {
+		return 0
+	}
+	return int(f)
 }
 
 // GetActiveRecordings 返回正在录制的记录列表。

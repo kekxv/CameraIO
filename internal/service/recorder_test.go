@@ -360,16 +360,21 @@ func TestDeleteRecording_MissingFile(t *testing.T) {
 	}
 }
 
-func TestReconcileOrphaned(t *testing.T) {
+func TestReconcileOrphaned_ValidFile(t *testing.T) {
 	db, cleanup := setupRecorderTestDB(t)
 	defer cleanup()
 
-	now := time.Now()
-	// 孤儿记录：状态 recording，但任务不在内存中
+	// 创建有效文件
+	tmpDir, _ := os.MkdirTemp("", "reconcile-valid")
+	defer os.RemoveAll(tmpDir)
+	filePath := filepath.Join(tmpDir, "valid.mp4")
+	os.WriteFile(filePath, []byte("fake mp4 content"), 0o644)
+
+	// 孤儿记录：状态 recording，文件有效，但任务不在内存中
 	orphan := &model.Recording{
 		CameraID:  1,
-		FilePath:  "/tmp/orphan.mp4",
-		StartTime: now.Add(-5 * time.Minute),
+		FilePath:  filePath,
+		StartTime: time.Now().Add(-5 * time.Minute),
 		Status:    model.RecordingStatusRecording,
 	}
 	db.Create(orphan)
@@ -377,17 +382,65 @@ func TestReconcileOrphaned(t *testing.T) {
 	svc := NewRecorderService(db, &pkg.Config{})
 	svc.ReconcileOrphaned()
 
-	// 孤儿记录应标记为 failed
+	// 文件有效 → 标记为 completed（可下载查看）
+	var updated model.Recording
+	db.First(&updated, orphan.ID)
+	if updated.Status != model.RecordingStatusCompleted {
+		t.Errorf("valid file recording status = %s, want completed", updated.Status)
+	}
+	if updated.FileSize <= 0 {
+		t.Errorf("file_size should be set, got %d", updated.FileSize)
+	}
+}
+
+func TestReconcileOrphaned_NoFile(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	// 孤儿记录：文件不存在 → failed
+	orphan := &model.Recording{
+		CameraID:  1,
+		FilePath:  "/nonexistent/path.mp4",
+		StartTime: time.Now(),
+		Status:    model.RecordingStatusRecording,
+	}
+	db.Create(orphan)
+
+	svc := NewRecorderService(db, &pkg.Config{})
+	svc.ReconcileOrphaned()
+
 	var updated model.Recording
 	db.First(&updated, orphan.ID)
 	if updated.Status != model.RecordingStatusFailed {
-		t.Errorf("orphan recording status = %s, want failed", updated.Status)
+		t.Errorf("no-file recording status = %s, want failed", updated.Status)
 	}
-	if updated.EndTime == nil {
-		t.Error("orphan recording should have end_time")
+}
+
+func TestReconcileOrphaned_AlreadyFailedValidFile(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	// 有效文件但状态是 failed → 应升级为 completed
+	tmpDir, _ := os.MkdirTemp("", "reconcile-upgrade")
+	defer os.RemoveAll(tmpDir)
+	filePath := filepath.Join(tmpDir, "rec.mp4")
+	os.WriteFile(filePath, []byte("content"), 0o644)
+
+	rec := &model.Recording{
+		CameraID:  1,
+		FilePath:  filePath,
+		StartTime: time.Now(),
+		Status:    model.RecordingStatusFailed,
 	}
-	if updated.Duration <= 0 {
-		t.Errorf("orphan recording should have positive duration, got %d", updated.Duration)
+	db.Create(rec)
+
+	svc := NewRecorderService(db, &pkg.Config{})
+	svc.ReconcileOrphaned()
+
+	var updated model.Recording
+	db.First(&updated, rec.ID)
+	if updated.Status != model.RecordingStatusCompleted {
+		t.Errorf("failed-with-valid-file status = %s, want completed", updated.Status)
 	}
 }
 
