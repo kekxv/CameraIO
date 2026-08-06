@@ -259,8 +259,11 @@ func (s *GB28181Service) handleMessage(raw string, remoteAddr net.Addr, transpor
 	cmdType := extractXMLValue(body, "CmdType")
 	switch cmdType {
 	case "Keepalive":
-		// 心跳回复 200 OK
+		// 心跳回复 200 OK（Date 头即时间同步），并记录最后同步时间
 		s.sendSIPResponse(raw, remoteAddr, transport, 200, "OK")
+		s.db.Model(&model.Camera{}).
+			Where("device_id = ? AND access_protocol = ?", deviceID, model.ProtocolGB28181).
+			Update("last_time_sync", time.Now())
 
 	case "Catalog":
 		// 目录查询响应

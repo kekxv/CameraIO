@@ -34,8 +34,46 @@ func NewSystemMonitor(db *gorm.DB, eventBus *EventBus, onvif *ONVIFService) *Sys
 // Start 启动后台监控循环。
 func (m *SystemMonitor) Start() {
 	go m.cameraStatusLoop()
+	go m.enrichLoop()
 	go m.timeSyncLoop()
 	go m.systemMetricsLoop()
+}
+
+// enrichLoop 每 3 分钟对在线摄像头刷新分辨率/编码信息。
+// 保证已在线摄像头（未发生状态转换）也能获取到编码信息。
+func (m *SystemMonitor) enrichLoop() {
+	// 启动时立即刷新一次（已在线摄像头）
+	m.enrichAllOnline()
+
+	ticker := time.NewTicker(3 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			m.enrichAllOnline()
+		}
+	}
+}
+
+// enrichAllOnline 对所有在线摄像头刷新编码信息。
+// RTSP 走 ONVIF/ISAPI；GB28181 设备若同时支持 ONVIF 也能获取（纯 SIP 设备快速失败）。
+func (m *SystemMonitor) enrichAllOnline() {
+	var cameras []model.Camera
+	if err := m.db.Where("status = ?", model.CameraStatusOnline).Find(&cameras).Error; err != nil {
+		log.Printf("[monitor] list online cameras for enrich: %v", err)
+		return
+	}
+
+	for _, cam := range cameras {
+		// GB28181 且品牌为自定义（纯 SIP）时跳过，避免无效的 ONVIF 探测
+		if cam.AccessProtocol == model.ProtocolGB28181 && (cam.Brand == "" || cam.Brand == model.BrandCustom) {
+			continue
+		}
+		m.enrichCameraInfo(cam)
+	}
 }
 
 // Stop 停止后台监控。
