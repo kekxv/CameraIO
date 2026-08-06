@@ -208,6 +208,7 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 		// 校验 Digest 摘要
 		if !validateDigest(authHeader, password, deviceID, s.cfg.SIPRealm) {
 			log.Printf("[GB28181] Device %s auth failed (wrong password)", deviceID)
+			s.setCameraError(deviceID, "SIP 鉴权失败：密码不匹配")
 			s.sendUnauthorized(raw, remoteAddr, transport)
 			return
 		}
@@ -235,10 +236,13 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 	}
 	s.mu.Unlock()
 
-	// 更新数据库中的摄像头状态
+	// 更新数据库中的摄像头状态（注册成功，清除错误）
 	s.db.Model(&model.Camera{}).
 		Where("device_id = ? AND access_protocol = ?", deviceID, model.ProtocolGB28181).
-		Update("status", model.CameraStatusOnline)
+		Updates(map[string]any{
+			"status":     model.CameraStatusOnline,
+			"last_error": "",
+		})
 
 	// 广播事件
 	s.events.PublishCameraStatus(0, deviceID, model.CameraStatusOnline)
@@ -269,6 +273,13 @@ func (s *GB28181Service) getDevicePassword(deviceID string) string {
 		return ""
 	}
 	return cam.Password
+}
+
+// setCameraError 记录 GB28181 设备的错误信息（供前端展示）。
+func (s *GB28181Service) setCameraError(deviceID, msg string) {
+	s.db.Model(&model.Camera{}).
+		Where("device_id = ? AND access_protocol = ?", deviceID, model.ProtocolGB28181).
+		Update("last_error", msg)
 }
 
 // sendUnauthorized 返回 401 + WWW-Authenticate Digest 质询。
@@ -677,7 +688,10 @@ func (s *GB28181Service) checkKeepalive() {
 
 			s.db.Model(&model.Camera{}).
 				Where("device_id = ? AND access_protocol = ?", id, model.ProtocolGB28181).
-				Update("status", model.CameraStatusOffline)
+				Updates(map[string]any{
+					"status":     model.CameraStatusOffline,
+					"last_error": "心跳超时（设备离线）",
+				})
 
 			s.events.PublishCameraStatus(0, id, model.CameraStatusOffline)
 		}

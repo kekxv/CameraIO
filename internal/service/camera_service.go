@@ -36,7 +36,7 @@ func (s *CameraService) Shutdown() {
 
 type CreateCameraInput struct {
 	Name            string `json:"name" binding:"required"`
-	IP              string `json:"ip" binding:"required"`
+	IP              string `json:"ip"`
 	Port            int    `json:"port"`
 	RTSPUrl         string `json:"rtsp_url"`
 	Brand           string `json:"brand"`
@@ -105,6 +105,13 @@ func (s *CameraService) Create(in *CreateCameraInput) (*model.Camera, error) {
 	protocol := in.AccessProtocol
 	if protocol == "" {
 		protocol = model.ProtocolRTSP
+	}
+	// RTSP/本地需要 IP；GB28181 通过 SIP 注册，不需要
+	if protocol != model.ProtocolGB28181 && in.IP == "" {
+		return nil, errors.New("IP 地址必填")
+	}
+	if protocol == model.ProtocolGB28181 && in.DeviceID == "" {
+		return nil, errors.New("设备编码 (device_id) 必填")
 	}
 	deviceType := in.DeviceType
 	if deviceType == "" {

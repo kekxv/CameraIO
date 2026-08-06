@@ -65,92 +65,119 @@
           </div>
 
           <div class="mt-3 space-y-1 text-xs text-slate-500">
-            <div class="flex items-center gap-1">
-              <span class="text-slate-400 flex-shrink-0">品牌:</span>
-              <span class="truncate">{{ brandLabel(cam.brand) }}</span>
-              <span v-if="cam.device_type && cam.device_type !== 'ipc'" class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium flex-shrink-0">
-                {{ deviceTypeLabel(cam.device_type) }}
-              </span>
-              <!-- 编码格式 radio-button 组 -->
-              <div class="ml-auto flex items-center rounded-md border border-slate-200 overflow-hidden flex-shrink-0" title="切换编码格式">
-                <button
-                  v-for="opt in ['auto', 'h264', 'h265']"
-                  :key="opt"
-                  @click="handleSetCodec(cam, opt)"
-                  class="px-1.5 py-0.5 text-[10px] font-medium transition-colors border-r border-slate-200 last:border-r-0"
-                  :class="(cam.preferred_codec || 'auto') === opt
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-white text-slate-500 hover:bg-slate-50'"
-                >
-                  {{ opt === 'auto' ? '自动' : opt === 'h264' ? 'H.264' : 'H.265' }}
-                </button>
+            <!-- GB28181 卡片：显示国标信息 -->
+            <template v-if="cam.access_protocol === 'gb28181'">
+              <div class="flex items-center gap-1">
+                <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-medium">GB28181</span>
+                <span class="text-slate-400 ml-1">{{ cam.transport || 'UDP' }}</span>
+                <span class="ml-auto px-1.5 py-0.5 rounded text-[10px] font-medium"
+                  :class="cam.status === 'online' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'">
+                  {{ cam.status === 'online' ? '已注册' : '未注册' }}
+                </span>
               </div>
-            </div>
-            <div v-if="cam.nvr_channel > 0" class="flex items-center gap-1">
-              <span class="text-slate-400 flex-shrink-0">通道:</span>
-              <span>CH{{ cam.nvr_channel }}</span>
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-medium ml-1"
-                :class="(cam.stream_type || 'main') === 'sub' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'">
-                {{ (cam.stream_type || 'main') === 'sub' ? '子码流' : '主码流' }}
-              </span>
-            </div>
-            <div v-else class="flex items-center gap-1">
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-medium"
-                :class="(cam.stream_type || 'main') === 'sub' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'">
-                {{ (cam.stream_type || 'main') === 'sub' ? '子码流' : '主码流' }}
-              </span>
-            </div>
-            <div v-if="cam.access_protocol === 'gb28181'" class="flex items-center gap-1">
-              <span class="text-slate-400 flex-shrink-0">协议:</span>
-              <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-medium">GB28181</span>
-              <span class="text-slate-400">{{ cam.transport }}</span>
-            </div>
-            <div v-if="cam.device_id" class="flex items-center gap-1">
-              <span class="text-slate-400 flex-shrink-0">编码:</span>
-              <span class="font-mono truncate" :title="cam.device_id">{{ cam.device_id }}</span>
-            </div>
-            <div v-else class="flex items-center gap-1">
-              <span class="text-slate-400 flex-shrink-0">RTSP:</span>
-              <span class="font-mono truncate min-w-0" :title="cam.rtsp_url">{{ cam.rtsp_url }}</span>
-            </div>
-            <div v-if="cam.resolution || cam.codec" class="flex items-center gap-1">
-              <span class="text-slate-400 flex-shrink-0">视频:</span>
-              <span v-if="cam.resolution" class="font-mono">{{ cam.resolution }}</span>
-              <span v-if="cam.codec" class="px-1.5 py-0.5 rounded text-[10px] font-medium"
-                :class="cam.codec === 'H.265' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'">
-                {{ cam.codec }}
-              </span>
-            </div>
-            <div v-if="cam.last_time_sync" class="flex items-center gap-1">
-              <span class="text-slate-400 flex-shrink-0">对时:</span>
-              <span>{{ formatTime(cam.last_time_sync) }}</span>
+              <div class="flex items-center gap-1">
+                <span class="text-slate-400 flex-shrink-0">设备编码:</span>
+                <span class="font-mono truncate" :title="cam.device_id">{{ cam.device_id || '-' }}</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <span class="text-slate-400 flex-shrink-0">通道编码:</span>
+                <span class="font-mono truncate" :title="cam.channel_id">{{ cam.channel_id || cam.device_id || '-' }}</span>
+              </div>
+              <div v-if="cam.last_time_sync" class="flex items-center gap-1">
+                <span class="text-slate-400 flex-shrink-0">心跳/对时:</span>
+                <span>{{ formatTime(cam.last_time_sync) }}</span>
+              </div>
+            </template>
+
+            <!-- RTSP/本地卡片：显示品牌/编码/流信息 -->
+            <template v-else>
+              <div class="flex items-center gap-1">
+                <span class="text-slate-400 flex-shrink-0">品牌:</span>
+                <span class="truncate">{{ brandLabel(cam.brand) }}</span>
+                <span v-if="cam.device_type && cam.device_type !== 'ipc'" class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium flex-shrink-0">
+                  {{ deviceTypeLabel(cam.device_type) }}
+                </span>
+                <!-- 编码格式 radio-button 组 -->
+                <div class="ml-auto flex items-center rounded-md border border-slate-200 overflow-hidden flex-shrink-0" title="切换编码格式">
+                  <button
+                    v-for="opt in ['auto', 'h264', 'h265']"
+                    :key="opt"
+                    @click="handleSetCodec(cam, opt)"
+                    class="px-1.5 py-0.5 text-[10px] font-medium transition-colors border-r border-slate-200 last:border-r-0"
+                    :class="(cam.preferred_codec || 'auto') === opt
+                      ? 'bg-primary-600 text-white'
+                      : 'bg-white text-slate-500 hover:bg-slate-50'"
+                  >
+                    {{ opt === 'auto' ? '自动' : opt === 'h264' ? 'H.264' : 'H.265' }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="cam.nvr_channel > 0" class="flex items-center gap-1">
+                <span class="text-slate-400 flex-shrink-0">通道:</span>
+                <span>CH{{ cam.nvr_channel }}</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium ml-1"
+                  :class="(cam.stream_type || 'main') === 'sub' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'">
+                  {{ (cam.stream_type || 'main') === 'sub' ? '子码流' : '主码流' }}
+                </span>
+              </div>
+              <div v-else class="flex items-center gap-1">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                  :class="(cam.stream_type || 'main') === 'sub' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'">
+                  {{ (cam.stream_type || 'main') === 'sub' ? '子码流' : '主码流' }}
+                </span>
+              </div>
+              <div class="flex items-center gap-1">
+                <span class="text-slate-400 flex-shrink-0">RTSP:</span>
+                <span class="font-mono truncate min-w-0" :title="cam.rtsp_url">{{ cam.rtsp_url }}</span>
+              </div>
+              <div v-if="cam.resolution || cam.codec" class="flex items-center gap-1">
+                <span class="text-slate-400 flex-shrink-0">视频:</span>
+                <span v-if="cam.resolution" class="font-mono">{{ cam.resolution }}</span>
+                <span v-if="cam.codec" class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                  :class="cam.codec === 'H.265' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'">
+                  {{ cam.codec }}
+                </span>
+              </div>
+              <div v-if="cam.last_time_sync" class="flex items-center gap-1">
+                <span class="text-slate-400 flex-shrink-0">对时:</span>
+                <span>{{ formatTime(cam.last_time_sync) }}</span>
+              </div>
+            </template>
+
+            <!-- 错误信息展示 -->
+            <div v-if="cam.last_error" class="mt-1 px-2 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-600">
+              ⚠️ {{ cam.last_error }}
             </div>
           </div>
         </div>
 
         <div class="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2">
-          <button
-            @click="handleSyncTime(cam)"
-            :disabled="syncingId === cam.id"
-            class="flex-1 px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:opacity-50"
-          >
-            {{ syncingId === cam.id ? '同步中...' : '🕒 同步时间' }}
-          </button>
-          <button
-            @click="handleTest(cam)"
-            :disabled="testingId === cam.id"
-            class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:opacity-50"
-            title="测试连接"
-          >
-            {{ testingId === cam.id ? '...' : '🔌' }}
-          </button>
-          <button
-            @click="showNetworkDialog(cam)"
-            class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
-            title="网络配置"
-          >
-            🌐
-          </button>
+          <!-- RTSP: 同步时间/测试/网络配置 -->
+          <template v-if="cam.access_protocol !== 'gb28181'">
+            <button
+              @click="handleSyncTime(cam)"
+              :disabled="syncingId === cam.id"
+              class="flex-1 px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:opacity-50"
+            >
+              {{ syncingId === cam.id ? '同步中...' : '🕒 同步时间' }}
+            </button>
+            <button
+              @click="handleTest(cam)"
+              :disabled="testingId === cam.id"
+              class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:opacity-50"
+              title="测试连接"
+            >
+              {{ testingId === cam.id ? '...' : '🔌' }}
+            </button>
+            <button
+              @click="showNetworkDialog(cam)"
+              class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
+              title="网络配置"
+            >
+              🌐
+            </button>
+          </template>
+          <!-- GB28181: 显示注册状态（无同步/测试/网络） -->
           <button
             @click="handleEdit(cam)"
             class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
@@ -190,71 +217,74 @@
             />
           </div>
 
-          <div class="grid grid-cols-3 gap-3">
-            <div class="col-span-2">
-              <label class="block text-sm font-medium text-slate-700 mb-1">IP 地址 *</label>
-              <input
-                v-model="form.ip"
-                type="text"
-                required
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder="192.168.1.100"
-              />
+          <!-- RTSP/本地设备的网络配置（GB28181 通过 SIP 注册，无需 IP/端口） -->
+          <template v-if="form.access_protocol !== 'gb28181'">
+            <div class="grid grid-cols-3 gap-3">
+              <div class="col-span-2">
+                <label class="block text-sm font-medium text-slate-700 mb-1">IP 地址 *</label>
+                <input
+                  v-model="form.ip"
+                  type="text"
+                  required
+                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder="192.168.1.100"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">端口</label>
+                <input
+                  v-model.number="form.port"
+                  type="number"
+                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder="554"
+                />
+              </div>
             </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">端口</label>
-              <input
-                v-model.number="form.port"
-                type="number"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder="554"
-              />
-            </div>
-          </div>
 
-          <!-- 测试连接按钮 -->
-          <div v-if="form.ip && (form.username || form.password)" class="flex items-center gap-2">
-            <button
-              type="button"
-              @click="handleTestByIP"
-              :disabled="testingByIP"
-              class="px-3 py-1.5 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100 transition-colors disabled:opacity-50"
-            >
-              {{ testingByIP ? '测试中...' : '🔌 测试连接' }}
-            </button>
-            <span v-if="testResult" class="text-xs" :class="testResult.ok ? 'text-emerald-600' : 'text-red-600'">
-              {{ testResult.message }}
-            </span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">品牌</label>
-              <select
-                v-model="form.brand"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            <!-- 测试连接按钮 -->
+            <div v-if="form.ip && (form.username || form.password)" class="flex items-center gap-2">
+              <button
+                type="button"
+                @click="handleTestByIP"
+                :disabled="testingByIP"
+                class="px-3 py-1.5 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100 transition-colors disabled:opacity-50"
               >
-                <option value="custom">自定义</option>
-                <option value="hikvision">海康威视</option>
-                <option value="uniview">宇视</option>
-              </select>
+                {{ testingByIP ? '测试中...' : '🔌 测试连接' }}
+              </button>
+              <span v-if="testResult" class="text-xs" :class="testResult.ok ? 'text-emerald-600' : 'text-red-600'">
+                {{ testResult.message }}
+              </span>
             </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">设备类型</label>
-              <select
-                v-model="form.device_type"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
-                <option value="ipc">IPC 网络摄像机</option>
-                <option value="nvr">NVR 网络录像机</option>
-                <option value="dvr">DVR 数字录像机</option>
-                <option value="encoder">编码器</option>
-              </select>
-            </div>
-          </div>
 
-          <!-- NVR 通道发现 -->
-          <div v-if="form.device_type === 'nvr' || form.device_type === 'dvr'">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">品牌</label>
+                <select
+                  v-model="form.brand"
+                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="custom">自定义</option>
+                  <option value="hikvision">海康威视</option>
+                  <option value="uniview">宇视</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">设备类型</label>
+                <select
+                  v-model="form.device_type"
+                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="ipc">IPC 网络摄像机</option>
+                  <option value="nvr">NVR 网络录像机</option>
+                  <option value="dvr">DVR 数字录像机</option>
+                  <option value="encoder">编码器</option>
+                </select>
+              </div>
+            </div>
+          </template>
+
+          <!-- NVR 通道发现（仅 RTSP，GB28181 用设备/通道编码） -->
+          <div v-if="form.access_protocol !== 'gb28181' && (form.device_type === 'nvr' || form.device_type === 'dvr')">
             <div class="flex items-center gap-2 mb-2">
               <button
                 type="button"

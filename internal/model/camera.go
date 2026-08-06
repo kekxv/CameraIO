@@ -17,6 +17,8 @@ type Camera struct {
 	AutoTuneEnabled   bool      `json:"auto_tune_enabled" gorm:"default:true"`
 	Status            string    `json:"status" gorm:"type:varchar(16);default:offline"`
 	LastTimeSync      *time.Time `json:"last_time_sync,omitempty"`
+	// LastError: 最近一次错误信息（如 GB28181 注册失败、心跳超时等），正常时为空
+	LastError string `json:"last_error,omitempty" gorm:"type:varchar(255)"`
 	// Codec: 视频编码格式（H.264 / H.265），由在线检查时获取
 	Codec string `json:"codec,omitempty" gorm:"type:varchar(16)"`
 	// Resolution: 视频分辨率（如 1920x1080），由在线检查时获取
