@@ -195,7 +195,7 @@
               </button>
             </div>
             <p class="text-[10px] text-slate-400 mt-1">
-              {{ recordBitrate === 0 ? '原画质（相机码率，体积大）' : `约 ${(recordBitrate * 600 / 8000 / 8 * 60).toFixed(1)}MB/10分钟` }}
+              {{ recordBitrate === 0 ? '原画质（相机码率，体积大）' : `约 ${(recordBitrate * 600 / 8 / 1024).toFixed(1)}MB/10分钟` }}
             </p>
           </div>
 
