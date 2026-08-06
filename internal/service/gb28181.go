@@ -71,14 +71,6 @@ func NewGB28181Service(cfg *pkg.Config, db *gorm.DB, events *EventBus, streams *
 func (s *GB28181Service) Start() error {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
-	// 启动时将所有 GB28181 摄像头重置为离线（需重新注册后才会在线）
-	s.db.Model(&model.Camera{}).
-		Where("access_protocol = ?", model.ProtocolGB28181).
-		Updates(map[string]any{
-			"status":     model.CameraStatusOffline,
-			"last_error": "等待设备注册",
-		})
-
 	// 启动 UDP SIP 监听
 	udpAddr, err := net.ResolveUDPAddr("udp", s.cfg.SIPListenAddr)
 	if err != nil {
@@ -455,10 +447,30 @@ func (s *GB28181Service) handleMessage(raw string, remoteAddr net.Addr, transpor
 	callID := parseSIPHeader(raw, "Call-ID")
 	cseq := parseSIPHeader(raw, "CSeq")
 
-	// 更新心跳时间
+	// 更新心跳时间；若设备不在会话中（如服务器重启后），自动创建会话
 	s.mu.Lock()
 	if dev, ok := s.devices[deviceID]; ok {
 		dev.KeepaliveAt = time.Now()
+	} else {
+		// 从远端地址恢复会话（服务器重启后设备可能未重新 REGISTER 但仍在心跳）
+		addrIP := ""
+		addrPort := 0
+		switch a := remoteAddr.(type) {
+		case *net.UDPAddr:
+			addrIP, addrPort = a.IP.String(), a.Port
+		case *net.TCPAddr:
+			addrIP, addrPort = a.IP.String(), a.Port
+		}
+		if addrIP != "" {
+			s.devices[deviceID] = &DeviceSession{
+				DeviceID:     deviceID,
+				IP:           addrIP,
+				Port:         addrPort,
+				Transport:    transport,
+				KeepaliveAt:  time.Now(),
+				RegisteredAt: time.Now(),
+			}
+		}
 	}
 	s.mu.Unlock()
 
@@ -472,11 +484,15 @@ func (s *GB28181Service) handleMessage(raw string, remoteAddr net.Addr, transpor
 	cmdType := extractXMLValue(body, "CmdType")
 	switch cmdType {
 	case "Keepalive":
-		// 心跳回复 200 OK（Date 头即时间同步），并记录最后同步时间
+		// 心跳回复 200 OK（Date 头即时间同步），标记在线 + 记录心跳时间
 		s.sendSIPResponse(raw, remoteAddr, transport, 200, "OK")
 		s.db.Model(&model.Camera{}).
 			Where("device_id = ? AND access_protocol = ?", deviceID, model.ProtocolGB28181).
-			Update("last_time_sync", time.Now())
+			Updates(map[string]any{
+				"status":        model.CameraStatusOnline,
+				"last_error":    "",
+				"last_time_sync": time.Now(),
+			})
 
 	case "Catalog":
 		// 设备返回的目录查询响应：提取通道列表并记录
@@ -908,24 +924,40 @@ func (s *GB28181Service) keepaliveCheckLoop() {
 
 func (s *GB28181Service) checkKeepalive() {
 	timeout := 3 * time.Minute // 3 个心跳周期未响应视为离线
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
+	// 先检查内存会话
+	s.mu.Lock()
 	for id, dev := range s.devices {
 		if time.Since(dev.KeepaliveAt) > timeout {
 			log.Printf("[GB28181] Device %s keepalive timeout, marking offline", id)
 			delete(s.devices, id)
-
-			s.db.Model(&model.Camera{}).
-				Where("device_id = ? AND access_protocol = ?", id, model.ProtocolGB28181).
-				Updates(map[string]any{
-					"status":     model.CameraStatusOffline,
-					"last_error": "心跳超时（设备离线）",
-				})
-
-			s.events.PublishCameraStatus(0, id, model.CameraStatusOffline)
+			s.markOffline(id)
 		}
 	}
+	s.mu.Unlock()
+
+	// 兜底：扫描 DB 中状态为在线但心跳超时的 GB28181 设备
+	// （覆盖服务器重启后内存会话为空、但设备未及时重新注册的情况）
+	var cameras []model.Camera
+	if err := s.db.Where("access_protocol = ? AND status = ?", model.ProtocolGB28181, model.CameraStatusOnline).Find(&cameras).Error; err != nil {
+		return
+	}
+	for _, cam := range cameras {
+		if cam.LastTimeSync != nil && time.Since(*cam.LastTimeSync) > timeout {
+			s.markOffline(cam.DeviceID)
+		}
+	}
+}
+
+// markOffline 将 GB28181 设备标记为离线并广播事件。
+func (s *GB28181Service) markOffline(deviceID string) {
+	s.db.Model(&model.Camera{}).
+		Where("device_id = ? AND access_protocol = ?", deviceID, model.ProtocolGB28181).
+		Updates(map[string]any{
+			"status":     model.CameraStatusOffline,
+			"last_error": "心跳超时（设备离线）",
+		})
+	s.events.PublishCameraStatus(0, deviceID, model.CameraStatusOffline)
 }
 
 // ---------- SIP 消息构造与发送 ----------
