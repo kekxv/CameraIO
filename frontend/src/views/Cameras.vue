@@ -224,8 +224,51 @@
             />
           </div>
 
-          <!-- RTSP/本地设备的网络配置（GB28181 通过 SIP 注册，无需 IP/端口） -->
-          <template v-if="form.access_protocol !== 'gb28181'">
+          <!-- 接入协议（放在名称下方） -->
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">接入协议</label>
+            <div class="grid grid-cols-3 gap-2">
+              <label
+                class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
+                :class="form.access_protocol === 'rtsp'
+                  ? 'border-primary-500 bg-primary-50 text-primary-700'
+                  : 'border-slate-300 hover:bg-slate-50'"
+              >
+                <input type="radio" v-model="form.access_protocol" value="rtsp" class="text-primary-600" />
+                <div>
+                  <div class="text-sm font-medium">RTSP</div>
+                  <div class="text-xs text-slate-500">主动拉流</div>
+                </div>
+              </label>
+              <label
+                class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
+                :class="form.access_protocol === 'gb28181'
+                  ? 'border-primary-500 bg-primary-50 text-primary-700'
+                  : 'border-slate-300 hover:bg-slate-50'"
+              >
+                <input type="radio" v-model="form.access_protocol" value="gb28181" class="text-primary-600" />
+                <div>
+                  <div class="text-sm font-medium">GB28181</div>
+                  <div class="text-xs text-slate-500">国标 SIP</div>
+                </div>
+              </label>
+              <label
+                class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
+                :class="form.access_protocol === 'local'
+                  ? 'border-primary-500 bg-primary-50 text-primary-700'
+                  : 'border-slate-300 hover:bg-slate-50'"
+              >
+                <input type="radio" v-model="form.access_protocol" value="local" class="text-primary-600" />
+                <div>
+                  <div class="text-sm font-medium">本地</div>
+                  <div class="text-xs text-slate-500">USB/系统</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- RTSP 设备的网络配置（GB28181 通过 SIP 注册，本地用系统设备，均无需 IP/端口） -->
+          <template v-if="form.access_protocol === 'rtsp'">
             <div class="grid grid-cols-3 gap-3">
               <div class="col-span-2">
                 <label class="block text-sm font-medium text-slate-700 mb-1">IP 地址 *</label>
@@ -328,48 +371,6 @@
                 <span v-if="ch.rtsp_url" class="text-[10px] text-emerald-600 font-mono truncate max-w-[140px]" :title="ch.rtsp_url">
                   {{ ch.rtsp_url.replace(/^rtsp:\/\/[^@]*@/, 'rtsp://***@') }}
                 </span>
-              </label>
-            </div>
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">接入协议</label>
-            <div class="grid grid-cols-3 gap-2">
-              <label
-                class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
-                :class="form.access_protocol === 'rtsp'
-                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                  : 'border-slate-300 hover:bg-slate-50'"
-              >
-                <input type="radio" v-model="form.access_protocol" value="rtsp" class="text-primary-600" />
-                <div>
-                  <div class="text-sm font-medium">RTSP</div>
-                  <div class="text-xs text-slate-500">主动拉流</div>
-                </div>
-              </label>
-              <label
-                class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
-                :class="form.access_protocol === 'gb28181'
-                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                  : 'border-slate-300 hover:bg-slate-50'"
-              >
-                <input type="radio" v-model="form.access_protocol" value="gb28181" class="text-primary-600" />
-                <div>
-                  <div class="text-sm font-medium">GB28181</div>
-                  <div class="text-xs text-slate-500">国标 SIP</div>
-                </div>
-              </label>
-              <label
-                class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
-                :class="form.access_protocol === 'local'
-                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                  : 'border-slate-300 hover:bg-slate-50'"
-              >
-                <input type="radio" v-model="form.access_protocol" value="local" class="text-primary-600" />
-                <div>
-                  <div class="text-sm font-medium">本地</div>
-                  <div class="text-xs text-slate-500">USB/系统</div>
-                </div>
               </label>
             </div>
           </div>

@@ -106,8 +106,8 @@ func (s *CameraService) Create(in *CreateCameraInput) (*model.Camera, error) {
 	if protocol == "" {
 		protocol = model.ProtocolRTSP
 	}
-	// RTSP/本地需要 IP；GB28181 通过 SIP 注册，不需要
-	if protocol != model.ProtocolGB28181 && in.IP == "" {
+	// 只有 RTSP 需要 IP；GB28181 通过 SIP 注册，本地用系统设备，均不需要
+	if protocol == model.ProtocolRTSP && in.IP == "" {
 		return nil, errors.New("IP 地址必填")
 	}
 	if protocol == model.ProtocolGB28181 && in.DeviceID == "" {

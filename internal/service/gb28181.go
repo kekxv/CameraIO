@@ -231,10 +231,17 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 		expires = 3600
 	}
 
-	// 记录设备会话
-	addr := remoteAddr.(*net.UDPAddr)
-	if tcpAddr, ok := remoteAddr.(*net.TCPAddr); ok {
-		addr = &net.UDPAddr{IP: tcpAddr.IP, Port: tcpAddr.Port}
+	// 记录设备会话（支持 UDP 和 TCP 注册）
+	var addr *net.UDPAddr
+	switch a := remoteAddr.(type) {
+	case *net.UDPAddr:
+		addr = a
+	case *net.TCPAddr:
+		addr = &net.UDPAddr{IP: a.IP, Port: a.Port}
+	}
+	if addr == nil {
+		s.sendSIPResponse(raw, remoteAddr, transport, 400, "Bad Request")
+		return
 	}
 
 	deviceIP := addr.IP.String()
