@@ -42,13 +42,14 @@ type GB28181Service struct {
 
 // DeviceSession 代表一个已注册的 GB28181 设备。
 type DeviceSession struct {
-	DeviceID    string
-	IP          string
-	Port        int    // 设备 SIP 端口
-	Transport   string // UDP / TCP
+	DeviceID     string
+	IP           string
+	Port         int       // 设备 SIP 端口
+	Transport    string    // UDP / TCP
+	Domain       string    // 设备注册时使用的 SIP 域
 	RegisteredAt time.Time
 	KeepaliveAt  time.Time
-	Channels    []string // 通道 ID 列表
+	Channels     []string // 通道 ID 列表
 }
 
 func NewGB28181Service(cfg *pkg.Config, db *gorm.DB, events *EventBus, streams *StreamService) *GB28181Service {
@@ -217,6 +218,12 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 		s.sendSIPResponse(raw, remoteAddr, transport, 400, "Bad Request")
 		return
 	}
+	// 设备注册时使用的 SIP 域（从 To 头提取），INVITE 时需匹配
+	to := parseSIPHeader(raw, "To")
+	domain := extractSIPDomain(to)
+	if domain == "" {
+		domain = extractSIPDomain(from)
+	}
 
 	callID := parseSIPHeader(raw, "Call-ID")
 	cseq := parseSIPHeader(raw, "CSeq")
@@ -265,6 +272,7 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 		IP:           deviceIP,
 		Port:         addr.Port,
 		Transport:    transport,
+		Domain:       domain,
 		RegisteredAt: time.Now(),
 		KeepaliveAt:  time.Now(),
 	}
@@ -697,9 +705,19 @@ func (s *GB28181Service) buildINVITE(channelID string, dev *DeviceSession, sdp, 
 	callID := generateCallID()
 	cseq := 1
 	localIP := s.getLocalIP()
+	// 使用设备注册时的域；若未记录则用 SIPRealm
+	domain := dev.Domain
+	if domain == "" {
+		domain = s.cfg.SIPRealm
+	}
+	// Via 传输协议与发送方式一致
+	viaTransport := "UDP"
+	if dev.Transport == "TCP" {
+		viaTransport = "TCP"
+	}
 
 	return fmt.Sprintf("INVITE sip:%s@%s SIP/2.0\r\n"+
-		"Via: SIP/2.0/UDP %s:5060;rport;branch=z9hG4bK%s\r\n"+
+		"Via: SIP/2.0/%s %s:5060;rport;branch=z9hG4bK%s\r\n"+
 		"From: <sip:%s@%s>;tag=CameraIO\r\n"+
 		"To: <sip:%s@%s>\r\n"+
 		"Call-ID: %s\r\n"+
@@ -712,10 +730,10 @@ func (s *GB28181Service) buildINVITE(channelID string, dev *DeviceSession, sdp, 
 		"Content-Length: %d\r\n"+
 		"\r\n"+
 		"%s",
-		channelID, dev.IP,
-		localIP, generateBranch(),
-		s.cfg.SIPServerID, s.cfg.SIPRealm,
-		channelID, dev.IP,
+		channelID, domain,
+		viaTransport, localIP, generateBranch(),
+		s.cfg.SIPServerID, domain,
+		channelID, domain,
 		callID,
 		cseq,
 		subject,
@@ -840,6 +858,18 @@ func extractSIPUser(sipURI string) string {
 		return sipURI[:idx]
 	}
 	return sipURI
+}
+
+// extractSIPDomain 从 SIP URI 提取域部分。
+func extractSIPDomain(sipURI string) string {
+	sipURI = strings.Trim(sipURI, "<> ")
+	if idx := strings.Index(sipURI, "sip:"); idx >= 0 {
+		sipURI = sipURI[idx+4:]
+	}
+	if idx := strings.Index(sipURI, "@"); idx >= 0 {
+		return sipURI[idx+1:]
+	}
+	return ""
 }
 
 func parseExpires(raw string) int {

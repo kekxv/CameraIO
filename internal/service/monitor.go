@@ -120,7 +120,14 @@ func (m *SystemMonitor) checkCameraStatus() {
 }
 
 // enrichCameraInfo 通过 ONVIF 获取摄像头分辨率/编码信息并更新数据库。
+// 仅对 RTSP 摄像头生效（GB28181 用 SIP，本地用系统设备，均无 ONVIF）。
 func (m *SystemMonitor) enrichCameraInfo(cam model.Camera) {
+	if cam.AccessProtocol == model.ProtocolGB28181 || cam.AccessProtocol == model.ProtocolLocal {
+		return
+	}
+	if cam.Username == "" {
+		return // 无 ONVIF 凭据
+	}
 	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 	defer cancel()
 
