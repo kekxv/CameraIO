@@ -331,7 +331,7 @@ func (s *GB28181Service) sendRegisterOK(req string, remoteAddr net.Addr, transpo
 		"Content-Length: 0\r\n"+
 		"\r\n",
 		via, from, to, tag, callIDHdr, cseqHdr, contact, expires,
-		time.Now().UTC().Format("2006-01-02T15:04:05"))
+		time.Now().Format("2006-01-02T15:04:05")) // 本地时间，设备直接用作本地时间
 	s.sendSIPRaw(resp, remoteAddr, transport)
 }
 
@@ -964,7 +964,7 @@ func (s *GB28181Service) markOffline(deviceID string) {
 
 func (s *GB28181Service) sendSIPResponse(req string, remoteAddr net.Addr, transport string, status int, reason string) {
 	resp := buildSIPResponse(req, status, reason, map[string]string{
-		"Date":   time.Now().UTC().Format("2006-01-02T15:04:05"),
+		"Date":   time.Now().Format("2006-01-02T15:04:05"), // 本地时间
 		"Server": "CameraIO/1.0",
 	})
 	s.sendSIPRaw(resp, remoteAddr, transport)
