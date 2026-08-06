@@ -1,7 +1,7 @@
 # ---------- 编译产物 ----------
-# Go 二进制
-CameraIO
-localcam
+# Go 二进制（/ 锚定根目录，避免误伤 cmd/localcam 源码目录）
+/CameraIO
+/localcam
 *.exe
 *.out
 *.test
