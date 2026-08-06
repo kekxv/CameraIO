@@ -68,9 +68,9 @@ type Stream struct {
 	latestJPG []byte
 
 	// JPEG 提取节流（避免每个 IDR 帧都启动 FFmpeg）
-	extractMu      sync.Mutex
-	lastExtractAt  time.Time
-	extracting     bool
+	extractMu     sync.Mutex
+	lastExtractAt time.Time
+	extracting    bool
 
 	// 持续 MJPEG 转码器（10+ FPS）
 	mjpegDone chan struct{}
@@ -80,10 +80,10 @@ type Stream struct {
 
 // NALU 代表一帧 H.264 NAL 单元。
 type NALU struct {
-	Type    byte // NALU type (1=IDR, 5=non-IDR, 7=SPS, 8=PPS, etc.)
-	Data    []byte
-	IsIDR   bool
-	Pts     time.Duration
+	Type  byte // NALU type (1=IDR, 5=non-IDR, 7=SPS, 8=PPS, etc.)
+	Data  []byte
+	IsIDR bool
+	Pts   time.Duration
 }
 
 // ---------- StreamService API ----------

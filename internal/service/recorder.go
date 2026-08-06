@@ -18,17 +18,20 @@ import (
 	"CameraIO/internal/model"
 	"CameraIO/internal/pkg"
 
+	"io"
+
 	"gorm.io/gorm"
 )
 
 // RecorderService 管理录像任务：Stream-Copy 将 RTSP 流直接写入 MP4。
 type RecorderService struct {
-	db     *gorm.DB
-	cfg    *pkg.Config
-	mu     sync.Mutex
-	tasks  map[uint]*recordTask // recordingID → task
-	ctx    context.Context
-	cancel context.CancelFunc
+	db      *gorm.DB
+	cfg     *pkg.Config
+	mu      sync.Mutex
+	tasks   map[uint]*recordTask // recordingID → task
+	ctx     context.Context
+	cancel  context.CancelFunc
+	streams *StreamService // 用于 GB28181 录像（从 NALU 流录制）
 }
 
 type recordTask struct {
@@ -37,6 +40,11 @@ type recordTask struct {
 	cancel       context.CancelFunc
 	stderr       *bytes.Buffer // 捕获 FFmpeg 错误输出
 	forceStopped bool          // 是否由内部 watchdog 强制停止（到期）
+	// GB28181 录像：NALU 订阅
+	isGB28181 bool
+	naluCh    <-chan NALU
+	unsub     func()
+	stdin     io.WriteCloser // FFmpeg 标准输入
 }
 
 func NewRecorderService(db *gorm.DB, cfg *pkg.Config) *RecorderService {
@@ -48,6 +56,11 @@ func NewRecorderService(db *gorm.DB, cfg *pkg.Config) *RecorderService {
 		ctx:    ctx,
 		cancel: cancel,
 	}
+}
+
+// SetStreamService 注入流服务（用于 GB28181 录像）。
+func (s *RecorderService) SetStreamService(st *StreamService) {
+	s.streams = st
 }
 
 // StartSweep 启动周期清扫：检测活跃录像的 FFmpeg 进程是否存活，
@@ -122,6 +135,14 @@ func (s *RecorderService) Shutdown() {
 	s.mu.Unlock()
 
 	for _, t := range tasks {
+		if t.isGB28181 {
+			if t.unsub != nil {
+				t.unsub()
+			}
+			if t.stdin != nil {
+				_ = t.stdin.Close()
+			}
+		}
 		t.cancel()
 		t.cmd.Wait()
 		s.finalizeRecording(t.recording.ID, t)
@@ -199,29 +220,22 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 		return nil, err
 	}
 
-	// 构建 FFmpeg 参数
-	args := s.buildRecordingArgs(cam.RTSPUrl, filePath, format, in.WithAudio, in.Bitrate)
+	var task *recordTask
+	var err error
 
-	// 启动 FFmpeg 进程
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, pkg.FFmpegBinPath(), args...)
-
-	// 捕获 stderr 用于诊断
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-
-	if err := cmd.Start(); err != nil {
+	if cam.AccessProtocol == model.ProtocolGB28181 {
+		// GB28181：从 Stream 的 NALU 流录制（与预览同一条链路）
+		task, err = s.startGB28181Recording(recording, cam, format, in.WithAudio, in.Bitrate)
+	} else {
+		// RTSP/本地：FFmpeg 直接拉流录制
+		args := s.buildRecordingArgs(cam.RTSPUrl, filePath, format, in.WithAudio, in.Bitrate)
+		task, err = s.startFFmpegRecording(recording, args)
+	}
+	if err != nil {
 		s.db.Model(recording).Update("status", model.RecordingStatusFailed)
-		cancel()
-		return nil, fmt.Errorf("start ffmpeg: %w", err)
+		return nil, err
 	}
 
-	task := &recordTask{
-		recording: recording,
-		cmd:       cmd,
-		cancel:    cancel,
-		stderr:    &stderrBuf,
-	}
 	s.mu.Lock()
 	s.tasks[recording.ID] = task
 	s.mu.Unlock()
@@ -235,6 +249,127 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	go s.watchTask(recording.ID, task)
 
 	return recording, nil
+}
+
+// startFFmpegRecording 启动 FFmpeg 直接拉流录制（RTSP/本地）。
+func (s *RecorderService) startFFmpegRecording(recording *model.Recording, args []string) (*recordTask, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, pkg.FFmpegBinPath(), args...)
+
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("start ffmpeg: %w", err)
+	}
+
+	return &recordTask{
+		recording: recording,
+		cmd:       cmd,
+		cancel:    cancel,
+		stderr:    &stderrBuf,
+	}, nil
+}
+
+// startGB28181Recording 从 Stream 的 NALU 流录制（GB28181 无 RTSP）。
+// 启动流 → 订阅 NALU → 喂给 FFmpeg（H.264 流拷贝成 MP4）。
+func (s *RecorderService) startGB28181Recording(recording *model.Recording, cam model.Camera, format string, withAudio bool, bitrate int) (*recordTask, error) {
+	if s.streams == nil {
+		return nil, fmt.Errorf("stream service not available for GB28181 recording")
+	}
+	// 确保流已启动（触发 INVITE + RTP 接收）
+	if err := s.streams.StartStream(cam.ID); err != nil {
+		return nil, fmt.Errorf("start stream: %w", err)
+	}
+	st := s.streams.GetStream(cam.ID)
+	if st == nil {
+		return nil, fmt.Errorf("stream not started for camera %d", cam.ID)
+	}
+
+	// 启动 FFmpeg：读 H.264 流，写成 MP4
+	ctx, cancel := context.WithCancel(context.Background())
+	ffArgs := []string{
+		"-f", "h264",
+		"-i", "pipe:0",
+		"-c:v", "copy",
+	}
+	if !withAudio {
+		ffArgs = append(ffArgs, "-an")
+	} else {
+		ffArgs = append(ffArgs, "-c:a", "aac")
+	}
+	if bitrate > 0 {
+		ffArgs = append(ffArgs,
+			"-c:v", "libx264",
+			"-b:v", fmt.Sprintf("%dk", bitrate),
+			"-preset", "veryfast",
+		)
+	}
+	switch format {
+	case model.FormatMP4:
+		ffArgs = append(ffArgs, "-movflags", "+frag_keyframe+empty_moov", "-f", "mp4")
+	case model.FormatWebM:
+		ffArgs = append(ffArgs, "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "4", "-f", "webm")
+	case model.FormatTS:
+		ffArgs = append(ffArgs, "-f", "mpegts")
+	}
+	ffArgs = append(ffArgs, recording.FilePath)
+
+	cmd := exec.CommandContext(ctx, pkg.FFmpegBinPath(), ffArgs...)
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("start ffmpeg: %w", err)
+	}
+
+	// 订阅 NALU 流，喂给 FFmpeg
+	naluCh, unsub := st.Subscribe()
+	task := &recordTask{
+		recording: recording,
+		cmd:       cmd,
+		cancel:    cancel,
+		stderr:    &stderrBuf,
+		isGB28181: true,
+		naluCh:    naluCh,
+		unsub:     unsub,
+		stdin:     stdin,
+	}
+
+	// 喂 NALU（带 start code）到 FFmpeg stdin
+	startCode := []byte{0, 0, 0, 1}
+	go func() {
+		defer stdin.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case nalu, ok := <-naluCh:
+				if !ok {
+					return
+				}
+				if len(nalu.Data) == 0 {
+					continue
+				}
+				// 拼 start code + NALU
+				buf := make([]byte, 0, len(startCode)+len(nalu.Data))
+				buf = append(buf, startCode...)
+				buf = append(buf, nalu.Data...)
+				if _, err := stdin.Write(buf); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	return task, nil
 }
 
 // maxDurationWatchdog 在达到最大录制时长后强制停止录像。
@@ -364,8 +499,19 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 		return nil
 	}
 
-	// 发送 SIGINT 让 FFmpeg 优雅关闭（写入 moov atom）
-	task.cancel()
+	// GB28181：先关闭 FFmpeg 标准输入（EOF 让 FFmpeg 完成 MP4 收尾），再取消
+	if task.isGB28181 {
+		if task.unsub != nil {
+			task.unsub()
+		}
+		if task.stdin != nil {
+			_ = task.stdin.Close() // EOF → FFmpeg 正常结束
+		}
+		task.cancel()
+	} else {
+		// RTSP：取消 context 让 FFmpeg 退出
+		task.cancel()
+	}
 
 	// 等待 FFmpeg 退出，但加超时避免阻塞（部分设备/编码下进程退出慢）
 	if task.cmd.Process != nil {
@@ -536,9 +682,9 @@ func (s *RecorderService) finalizeRecording(recordingID uint, task *recordTask) 
 	} else {
 		// 无文件 → failed
 		if err := s.db.Model(&model.Recording{}).Where("id = ?", recordingID).Updates(map[string]any{
-			"end_time":  now,
-			"duration":  int(now.Sub(task.recording.StartTime).Seconds()),
-			"status":    model.RecordingStatusFailed,
+			"end_time": now,
+			"duration": int(now.Sub(task.recording.StartTime).Seconds()),
+			"status":   model.RecordingStatusFailed,
 		}).Error; err != nil {
 			log.Printf("[recorder] recording %d finalize to failed FAILED: %v", recordingID, err)
 		} else {

@@ -24,30 +24,30 @@ import (
 // GB28181Service 实现国标 GB/T 28181 SIP 信令服务。
 // 作为 SIP UAS 接收摄像头注册、心跳、点播请求。
 type GB28181Service struct {
-	cfg    *pkg.Config
-	db     *gorm.DB
-	events *EventBus
+	cfg     *pkg.Config
+	db      *gorm.DB
+	events  *EventBus
 	streams *StreamService // 用于将 GB28181 流接入现有分发体系
 
-	mu         sync.RWMutex
-	devices    map[string]*DeviceSession    // deviceID → session
-	rtpPorts   atomic.Int32                 // 下一个可用 RTP 端口
-	rtpRecvs   map[int]*RTPReceiver         // port → RTP 接收器
-	tcpConns   map[string]net.Conn         // 远端地址 → TCP 连接（用于发送 SIP 响应）
+	mu       sync.RWMutex
+	devices  map[string]*DeviceSession // deviceID → session
+	rtpPorts atomic.Int32              // 下一个可用 RTP 端口
+	rtpRecvs map[int]*RTPReceiver      // port → RTP 接收器
+	tcpConns map[string]net.Conn       // 远端地址 → TCP 连接（用于发送 SIP 响应）
 
-	udpConn  *net.UDPConn
-	tcpLn    net.Listener
-	ctx      context.Context
-	cancel   context.CancelFunc
+	udpConn *net.UDPConn
+	tcpLn   net.Listener
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // DeviceSession 代表一个已注册的 GB28181 设备。
 type DeviceSession struct {
 	DeviceID     string
 	IP           string
-	Port         int       // 设备 SIP 端口
-	Transport    string    // UDP / TCP
-	Domain       string    // 设备注册时使用的 SIP 域
+	Port         int    // 设备 SIP 端口
+	Transport    string // UDP / TCP
+	Domain       string // 设备注册时使用的 SIP 域
 	RegisteredAt time.Time
 	KeepaliveAt  time.Time
 	Channels     []string // 通道 ID 列表
@@ -489,8 +489,8 @@ func (s *GB28181Service) handleMessage(raw string, remoteAddr net.Addr, transpor
 		s.db.Model(&model.Camera{}).
 			Where("device_id = ? AND access_protocol = ?", deviceID, model.ProtocolGB28181).
 			Updates(map[string]any{
-				"status":        model.CameraStatusOnline,
-				"last_error":    "",
+				"status":         model.CameraStatusOnline,
+				"last_error":     "",
 				"last_time_sync": time.Now(),
 			})
 
@@ -673,7 +673,7 @@ func (s *GB28181Service) sendACKForInvite(req string, remoteAddr net.Addr, trans
 	if fields := strings.Fields(cseq); len(fields) > 0 {
 		cseqNum = fields[0]
 	}
-	to := parseSIPHeader(req, "To")   // <sip:channel@domain>;tag=xxx
+	to := parseSIPHeader(req, "To") // <sip:channel@domain>;tag=xxx
 	from := parseSIPHeader(req, "From")
 
 	// 请求 URI = sip:user@domain
