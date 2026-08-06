@@ -42,9 +42,9 @@
       <div
         v-for="cam in cameras"
         :key="cam.id"
-        class="bg-white rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-shadow"
+        class="bg-white rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-shadow flex flex-col"
       >
-        <div class="p-4">
+        <div class="p-4 flex-1">
           <div class="flex items-start justify-between">
             <div class="flex-1 min-w-0">
               <h3 class="font-semibold text-slate-800 truncate">{{ cam.name }}</h3>
@@ -69,7 +69,10 @@
             <template v-if="cam.access_protocol === 'gb28181'">
               <div class="flex items-center gap-1">
                 <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-medium">GB28181</span>
-                <span class="text-slate-400 ml-1">{{ cam.transport || 'UDP' }}</span>
+                <span v-if="cam.transport" class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                  :class="cam.transport === 'TCP' ? 'bg-cyan-100 text-cyan-700' : 'bg-slate-100 text-slate-600'">
+                  {{ cam.transport }}
+                </span>
                 <span class="ml-auto px-1.5 py-0.5 rounded text-[10px] font-medium"
                   :class="cam.status === 'online' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'">
                   {{ cam.status === 'online' ? '已注册' : '未注册' }}
@@ -82,6 +85,10 @@
               <div class="flex items-center gap-1">
                 <span class="text-slate-400 flex-shrink-0">通道编码:</span>
                 <span class="font-mono truncate" :title="cam.channel_id">{{ cam.channel_id || cam.device_id || '-' }}</span>
+              </div>
+              <div v-if="cam.ip" class="flex items-center gap-1">
+                <span class="text-slate-400 flex-shrink-0">注册地址:</span>
+                <span class="font-mono">{{ cam.ip }}{{ cam.port ? ':' + cam.port : '' }}</span>
               </div>
               <div v-if="cam.last_time_sync" class="flex items-center gap-1">
                 <span class="text-slate-400 flex-shrink-0">心跳/对时:</span>

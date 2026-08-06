@@ -237,16 +237,26 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 		addr = &net.UDPAddr{IP: tcpAddr.IP, Port: tcpAddr.Port}
 	}
 
+	deviceIP := addr.IP.String()
 	s.mu.Lock()
 	s.devices[deviceID] = &DeviceSession{
 		DeviceID:     deviceID,
-		IP:           addr.IP.String(),
+		IP:           deviceIP,
 		Port:         addr.Port,
 		Transport:    transport,
 		RegisteredAt: time.Now(),
 		KeepaliveAt:  time.Now(),
 	}
 	s.mu.Unlock()
+
+	// 记录设备的注册 IP/端口/传输方式，供前端展示
+	s.db.Model(&model.Camera{}).
+		Where("device_id = ? AND access_protocol = ?", deviceID, model.ProtocolGB28181).
+		Updates(map[string]any{
+			"ip":        deviceIP,
+			"port":      addr.Port,
+			"transport": transport,
+		})
 
 	// 更新数据库中的摄像头状态（注册成功，清除错误）
 	s.db.Model(&model.Camera{}).
