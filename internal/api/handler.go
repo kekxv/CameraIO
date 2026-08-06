@@ -13,7 +13,6 @@ type Handler struct {
 	userSvc      *service.UserService
 	cameraSvc    *service.CameraService
 	streamSvc    *service.StreamService
-	webrtcSvc    *service.WebRTCService
 	recorderSvc  *service.RecorderService
 	eventBus     *service.EventBus
 	localCamSvc  *service.LocalCameraService
@@ -26,7 +25,6 @@ func NewHandler(
 	userSvc *service.UserService,
 	cameraSvc *service.CameraService,
 	streamSvc *service.StreamService,
-	webrtcSvc *service.WebRTCService,
 	recorderSvc *service.RecorderService,
 	eventBus *service.EventBus,
 	localCamSvc *service.LocalCameraService,
@@ -38,7 +36,6 @@ func NewHandler(
 		userSvc:      userSvc,
 		cameraSvc:    cameraSvc,
 		streamSvc:    streamSvc,
-		webrtcSvc:    webrtcSvc,
 		recorderSvc:  recorderSvc,
 		eventBus:     eventBus,
 		localCamSvc:  localCamSvc,

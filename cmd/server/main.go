@@ -43,7 +43,6 @@ func main() {
 	onvifSvc := service.NewONVIFService()
 	cameraSvc := service.NewCameraService(db, onvifSvc)
 	streamSvc := service.NewStreamService(db)
-	webrtcSvc := service.NewWebRTCService()
 	recorderSvc := service.NewRecorderService(db, cfg)
 	eventBus := service.NewEventBus()
 	monitor := service.NewSystemMonitor(db, eventBus)
@@ -60,7 +59,7 @@ func main() {
 	}
 
 	// 初始化 Handler
-	handler := api.NewHandler(userSvc, cameraSvc, streamSvc, webrtcSvc, recorderSvc, eventBus, localCamSvc, discoverySvc, scheduleSvc, jwtCfg)
+	handler := api.NewHandler(userSvc, cameraSvc, streamSvc, recorderSvc, eventBus, localCamSvc, discoverySvc, scheduleSvc, jwtCfg)
 	router := handler.SetupRouter()
 
 	// 注册前端静态文件服务

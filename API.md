@@ -305,57 +305,13 @@ curl -X POST http://localhost:8080/api/v1/cameras -H "Authorization: Bearer $TOK
 
 停止拉流。
 
-### POST /streams/:id/webrtc
-
-WebRTC 信令接口：接收前端 Offer SDP，返回 Answer SDP。
-
-**请求**
-
-```json
-{
-  "sdp": "v=0\r\no=- 123456..."
-}
-```
-
 **响应** (200)
 
 ```json
 {
   "code": 0,
-  "data": {
-    "sdp": "v=0\r\no=- 789012..."
-  }
+  "message": "stream stopped"
 }
-```
-
-**前端集成示例**
-
-```javascript
-const pc = new RTCPeerConnection({
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-});
-
-pc.addTransceiver('video', { direction: 'recvonly' });
-
-pc.ontrack = (event) => {
-  const video = document.getElementById('player');
-  video.srcObject = event.streams[0];
-};
-
-const offer = await pc.createOffer();
-await pc.setLocalDescription(offer);
-
-const resp = await fetch('/api/v1/streams/1/webrtc', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer <token>'
-  },
-  body: JSON.stringify({ sdp: offer.sdp })
-});
-
-const { data } = await resp.json();
-await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp });
 ```
 
 ### GET /streams/:id/mjpeg

@@ -44,7 +44,6 @@ func (h *Handler) SetupRouter() *gin.Engine {
 		// Streams
 		protected.POST("/streams/:id/start", h.StartStream)
 		protected.POST("/streams/:id/stop", h.StopStream)
-		protected.POST("/streams/:id/webrtc", h.WebRTCOffer)
 		protected.GET("/streams/:id/mjpeg", h.StreamMJPEG)
 
 		// Recordings

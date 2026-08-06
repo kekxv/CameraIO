@@ -32,14 +32,13 @@ func setupTestHandler(t *testing.T) *Handler {
 	onvifSvc := service.NewONVIFService()
 	cameraSvc := service.NewCameraService(db, onvifSvc)
 	streamSvc := service.NewStreamService(db)
-	webrtcSvc := service.NewWebRTCService()
 	recorderSvc := service.NewRecorderService(db, pkg.DefaultConfig())
 	eventBus := service.NewEventBus()
 	localCamSvc := service.NewLocalCameraService()
 	discoverySvc := service.NewDiscoveryService(onvifSvc)
 	scheduleSvc := service.NewScheduleService(db, recorderSvc)
 
-	handler := NewHandler(userSvc, cameraSvc, streamSvc, webrtcSvc, recorderSvc, eventBus, localCamSvc, discoverySvc, scheduleSvc, jwtCfg)
+	handler := NewHandler(userSvc, cameraSvc, streamSvc, recorderSvc, eventBus, localCamSvc, discoverySvc, scheduleSvc, jwtCfg)
 	return handler
 }
 

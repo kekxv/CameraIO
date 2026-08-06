@@ -1,13 +1,10 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
-
-	"CameraIO/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -31,37 +28,6 @@ func (h *Handler) StopStream(c *gin.Context) {
 	}
 	h.streamSvc.StopStream(id)
 	ok(c, gin.H{"message": "stream stopped"})
-}
-
-func (h *Handler) WebRTCOffer(c *gin.Context) {
-	id, err := parseUintParam(c, "id")
-	if err != nil {
-		return
-	}
-
-	stream := h.streamSvc.GetStream(id)
-	if stream == nil {
-		// 自动启动流
-		if err := h.streamSvc.StartStream(id); err != nil {
-			fail(c, http.StatusInternalServerError, err.Error())
-			return
-		}
-		stream = h.streamSvc.GetStream(id)
-	}
-
-	var req service.WebRTCOfferRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid SDP")
-		return
-	}
-
-	answerSDP, err := h.webrtcSvc.HandleOffer(c.Request.Context(), stream, req.SDP)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, fmt.Sprintf("webrtc error: %v", err))
-		return
-	}
-
-	c.JSON(http.StatusOK, service.WebRTCOfferResponse{SDP: answerSDP})
 }
 
 func (h *Handler) StreamMJPEG(c *gin.Context) {
@@ -125,16 +91,4 @@ func (h *Handler) StreamMJPEG(c *gin.Context) {
 			flusher.Flush()
 		}
 	}
-}
-
-// ---------- SDP 工具函数 ----------
-
-func parseSDP(data []byte) (string, error) {
-	var req struct {
-		SDP string `json:"sdp"`
-	}
-	if err := json.Unmarshal(data, &req); err != nil {
-		return "", err
-	}
-	return req.SDP, nil
 }

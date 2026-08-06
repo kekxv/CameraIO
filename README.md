@@ -21,7 +21,7 @@ CameraIO 是一款高吞吐、极低延迟、API 优先的轻量级软件 NVR，
 ┌──────────────────────────────────────────────┐
 │          第三方系统 / Web 客户端              │
 └──────────────┬───────────────────────────────┘
-               │ HTTP REST / WebSocket / WebRTC
+               │ HTTP REST / WebSocket
 ┌──────────────▼───────────────────────────────┐
 │              CameraIO 核心服务                │
 │  ┌───────────┐ ┌───────────┐ ┌───────────┐  │
@@ -37,7 +37,7 @@ CameraIO 是一款高吞吐、极低延迟、API 优先的轻量级软件 NVR，
 │  │  · GB28181 SIP 信令 (UAS)             │  │
 │  │  · RTP 收流 + PS 解封装               │  │
 │  │  · RTSP (UDP) 零缓冲拉流              │  │
-│  │  · WebRTC / MJPEG 低延迟分发          │  │
+│  │  · MJPEG 低延迟分发          │  │
 │  │  · Stream-Copy MP4 录像               │  │
 │  │  · WebSocket 事件推送                 │  │
 │  └───────────────────────────────────────┘  │
@@ -114,7 +114,7 @@ CameraIO/
 │   │   ├── handler.go          # Handler 统一结构
 │   │   ├── recording.go        # 录像控制 & 下载
 │   │   ├── router.go           # 路由注册
-│   │   ├── stream.go           # 实时流（WebRTC/MJPEG）
+│   │   ├── stream.go           # 实时流（MJPEG）
 │   │   └── websocket.go        # WebSocket 事件推送
 │   ├── model/                  # 数据模型
 │   │   ├── camera.go
@@ -136,7 +136,7 @@ CameraIO/
 │       ├── rtp_receiver.go     # GB28181 RTP 收流器
 │       ├── stream.go           # RTSP 拉流器
 │       ├── user_service.go     # 用户管理
-│       └── webrtc.go           # WebRTC 会话管理
+│       └── mjpeg.go            # MJPEG 帧分发
 └── go.mod
 ```
 
@@ -175,7 +175,7 @@ Authorization: Bearer <token>
 |---|---|---|
 | POST | `/api/v1/streams/:id/start` | 启动拉流 |
 | POST | `/api/v1/streams/:id/stop` | 停止拉流 |
-| POST | `/api/v1/streams/:id/webrtc` | WebRTC 信令（Offer → Answer SDP） |
+
 | GET | `/api/v1/streams/:id/mjpeg` | MJPEG 预览流 |
 
 ### 录像控制
@@ -225,7 +225,7 @@ CGO_ENABLED=1 go test ./internal/service/... -v
 | HTTP 框架 | Gin |
 | 数据库 | SQLite + GORM |
 | 鉴权 | JWT (golang-jwt) |
-| WebRTC | Pion WebRTC v4 |
+
 | WebSocket | gorilla/websocket |
 | RTSP/录像 | FFmpeg (CLI subprocess) |
 
