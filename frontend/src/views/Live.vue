@@ -180,6 +180,25 @@
             </p>
           </div>
 
+          <!-- 码率选项 -->
+          <div class="mb-3">
+            <label class="block text-xs font-medium text-slate-600 mb-1.5">码率（控制文件大小）</label>
+            <div class="flex rounded-lg border border-slate-200 overflow-hidden">
+              <button
+                v-for="opt in bitrateOptions"
+                :key="opt.value"
+                @click="recordBitrate = opt.value"
+                class="flex-1 py-1.5 text-xs font-medium transition-colors border-r border-slate-200 last:border-r-0"
+                :class="recordBitrate === opt.value ? 'bg-primary-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+            <p class="text-[10px] text-slate-400 mt-1">
+              {{ recordBitrate === 0 ? '原画质（相机码率，体积大）' : `约 ${(recordBitrate * 600 / 8000 / 8 * 60).toFixed(1)}MB/10分钟` }}
+            </p>
+          </div>
+
           <!-- 音频开关 -->
           <label class="flex items-center gap-2 mb-4 cursor-pointer">
             <input v-model="recordWithAudio" type="checkbox" class="rounded text-primary-600" />
@@ -214,6 +233,13 @@ const showRecordDialog = ref(false)
 const recordTarget = ref(null)
 const recordFormat = ref('mp4')
 const recordWithAudio = ref(false)
+const recordBitrate = ref(0) // kbps, 0=流拷贝原画质
+const bitrateOptions = [
+  { value: 0, label: '原画质' },
+  { value: 512, label: '512k' },
+  { value: 1000, label: '1M' },
+  { value: 2000, label: '2M' },
+]
 const nowStr = ref('')
 let clockTimer = null
 let eventWs = null
@@ -309,6 +335,7 @@ const toggleRecord = async (cam) => {
     recordTarget.value = cam
     recordFormat.value = 'mp4'
     recordWithAudio.value = false
+    recordBitrate.value = 0
     showRecordDialog.value = true
   }
 }
@@ -322,6 +349,7 @@ const confirmStartRecording = async () => {
     const rec = await startRecording(cam.id, {
       format: recordFormat.value,
       with_audio: recordWithAudio.value,
+      bitrate: recordBitrate.value,
     })
     recordingIdMap.value[cam.id] = rec.id
     recording.value[cam.id] = 'active'

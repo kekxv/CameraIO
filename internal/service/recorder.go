@@ -68,6 +68,7 @@ type StartRecordingInput struct {
 	WithAudio   bool   `json:"with_audio"`   // 是否包含音频
 	TriggerType string `json:"trigger_type"` // "api" / "manual" / "schedule"（默认 "api"）
 	MaxDuration int    `json:"max_duration"` // 最大录制时长（秒），0=不限；到期自动停止（录像器内部兜底）
+	Bitrate     int    `json:"bitrate"`      // 视频码率（kbps），0=流拷贝（相机原码率，体积大）；>0=转码限码率（体积小，需 CPU）
 }
 
 type StopRecordingInput struct {
@@ -130,7 +131,7 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	}
 
 	// 构建 FFmpeg 参数
-	args := s.buildRecordingArgs(cam.RTSPUrl, filePath, format, in.WithAudio)
+	args := s.buildRecordingArgs(cam.RTSPUrl, filePath, format, in.WithAudio, in.Bitrate)
 
 	// 启动 FFmpeg 进程
 	ctx, cancel := context.WithCancel(context.Background())
@@ -191,7 +192,7 @@ func (s *RecorderService) maxDurationWatchdog(recordingID uint, task *recordTask
 // 重要：不同容器对编码的支持不同：
 //   - MP4/TS: 支持 H.264/H.265 视频流拷贝，音频转码为 AAC（兼容所有摄像头音频）
 //   - WebM:   只支持 VP8/VP9/AV1 视频 + Vorbis/Opus 音频，必须转码（不能流拷贝 H.264/H.265）
-func (s *RecorderService) buildRecordingArgs(rtspURL, filePath, format string, withAudio bool) []string {
+func (s *RecorderService) buildRecordingArgs(rtspURL, filePath, format string, withAudio bool, bitrate int) []string {
 	args := []string{
 		"-y",
 		"-rtsp_transport", "tcp",
@@ -207,9 +208,26 @@ func (s *RecorderService) buildRecordingArgs(rtspURL, filePath, format string, w
 		}
 	}
 
+	// 视频编码辅助：bitrate>0 时转码限码率（控制文件大小），否则流拷贝（相机原码率）
+	videoArgs := func() {
+		if bitrate > 0 {
+			// 转码 H.264 并限码率
+			args = append(args,
+				"-c:v", "libx264",
+				"-b:v", fmt.Sprintf("%dk", bitrate),
+				"-maxrate", fmt.Sprintf("%dk", bitrate*12/10),
+				"-bufsize", fmt.Sprintf("%dk", bitrate*2),
+				"-preset", "veryfast",
+				"-profile:v", "main",
+			)
+		} else {
+			args = append(args, "-c:v", "copy") // 流拷贝零转码
+		}
+	}
+
 	switch format {
 	case model.FormatMP4:
-		args = append(args, "-c:v", "copy") // 视频流拷贝零转码
+		videoArgs()
 		audioArgs()
 		args = append(args, "-movflags", "+frag_keyframe+empty_moov")
 		args = append(args, "-f", "mp4")
@@ -217,6 +235,9 @@ func (s *RecorderService) buildRecordingArgs(rtspURL, filePath, format string, w
 	case model.FormatWebM:
 		// WebM 必须转码视频为 VP9
 		args = append(args, "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "4")
+		if bitrate > 0 {
+			args = append(args, "-b:v", fmt.Sprintf("%dk", bitrate))
+		}
 		if withAudio {
 			args = append(args, "-c:a", "libopus")
 		} else {
@@ -225,12 +246,12 @@ func (s *RecorderService) buildRecordingArgs(rtspURL, filePath, format string, w
 		args = append(args, "-f", "webm")
 
 	case model.FormatTS:
-		args = append(args, "-c:v", "copy")
+		videoArgs()
 		audioArgs()
 		args = append(args, "-f", "mpegts")
 
 	default:
-		args = append(args, "-c:v", "copy")
+		videoArgs()
 		audioArgs()
 		args = append(args, "-movflags", "+frag_keyframe+empty_moov")
 		args = append(args, "-f", "mp4")

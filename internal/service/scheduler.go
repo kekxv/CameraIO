@@ -77,6 +77,7 @@ func (s *ScheduleService) Update(id uint, sch *model.RecordingSchedule) error {
 		"days":       sch.Days,
 		"format":     sch.Format,
 		"with_audio": sch.WithAudio,
+		"bitrate":    sch.Bitrate,
 		"enabled":    sch.Enabled,
 	}).Error
 }
@@ -140,13 +141,14 @@ func (s *ScheduleService) checkSchedules() {
 
 		if inWindow && !isActive {
 			// 进入时间窗口 → 开始录像
-			// MaxDuration 传入录像器，由录像器内部兜底到点强制停止
+			// MaxDuration/Bitrate 传入录像器，由录像器内部兜底到点强制停止
 			rec, err := s.recorder.StartRecording(&StartRecordingInput{
 				CameraID:    sch.CameraID,
 				Format:      sch.Format,
 				WithAudio:   sch.WithAudio,
 				TriggerType: model.TriggerSchedule,
 				MaxDuration: scheduleDurationMin(&sch) * 60,
+				Bitrate:     sch.Bitrate,
 			})
 			if err != nil {
 				log.Printf("[scheduler] schedule %d start recording failed: %v", sch.ID, err)

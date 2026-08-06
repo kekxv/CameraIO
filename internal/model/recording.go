@@ -50,6 +50,7 @@ type RecordingSchedule struct {
 	Days      int       `json:"days" gorm:"default:127"`                    // bitmask: bit0=周一 ... bit6=周日，127=每天
 	Format    string    `json:"format" gorm:"type:varchar(8);default:mp4"`
 	WithAudio bool      `json:"with_audio" gorm:"default:false"`
+	Bitrate   int       `json:"bitrate" gorm:"default:0"`                    // 视频码率 kbps，0=流拷贝（相机原码率）
 	Enabled   bool      `json:"enabled" gorm:"default:true"`
 	CreatedAt time.Time `json:"created_at"`
 

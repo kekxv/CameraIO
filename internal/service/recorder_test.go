@@ -506,7 +506,7 @@ func TestGetActiveRecordingByCamera(t *testing.T) {
 
 func TestBuildRecordingArgs_MP4_NoAudio(t *testing.T) {
 	svc := NewRecorderService(nil, &pkg.Config{})
-	args := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.mp4", model.FormatMP4, false)
+	args := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.mp4", model.FormatMP4, false, 0)
 
 	// 必须包含的参数
 	required := []string{"-y", "-rtsp_transport", "tcp", "-i", "rtsp://test/stream", "-c:v", "copy", "-an", "-movflags", "-f", "mp4", "/tmp/out.mp4"}
@@ -526,7 +526,7 @@ func TestBuildRecordingArgs_MP4_NoAudio(t *testing.T) {
 
 func TestBuildRecordingArgs_MP4_WithAudio(t *testing.T) {
 	svc := NewRecorderService(nil, &pkg.Config{})
-	args := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.mp4", model.FormatMP4, true)
+	args := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.mp4", model.FormatMP4, true, 0)
 
 	// 有音频时应该有 -c:a aac
 	hasAAC := false
@@ -549,7 +549,7 @@ func TestBuildRecordingArgs_MP4_WithAudio(t *testing.T) {
 
 func TestBuildRecordingArgs_WebM_WithAudio(t *testing.T) {
 	svc := NewRecorderService(nil, &pkg.Config{})
-	args := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.webm", model.FormatWebM, true)
+	args := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.webm", model.FormatWebM, true, 0)
 
 	// 不应该有 -an（保留音频）
 	for _, a := range args {
@@ -604,7 +604,7 @@ func TestBuildRecordingArgs_WebM_WithAudio(t *testing.T) {
 
 func TestBuildRecordingArgs_TS(t *testing.T) {
 	svc := NewRecorderService(nil, &pkg.Config{})
-	args := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.ts", model.FormatTS, false)
+	args := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.ts", model.FormatTS, false, 0)
 
 	hasTS := false
 	for i, a := range args {
@@ -626,6 +626,49 @@ func TestBuildRecordingArgs_TS(t *testing.T) {
 	}
 	if !hasAN {
 		t.Error("TS no-audio should have -an")
+	}
+}
+
+func TestBuildRecordingArgs_BitrateTranscode(t *testing.T) {
+	svc := NewRecorderService(nil, &pkg.Config{})
+
+	// bitrate=600 → 转码 libx264 限码率
+	args := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.mp4", model.FormatMP4, false, 600)
+
+	// 应该有 libx264 + -b:v 600k
+	hasX264 := false
+	hasBitrate := false
+	for i, a := range args {
+		if a == "-c:v" && i+1 < len(args) && args[i+1] == "libx264" {
+			hasX264 = true
+		}
+		if a == "-b:v" && i+1 < len(args) && args[i+1] == "600k" {
+			hasBitrate = true
+		}
+	}
+	if !hasX264 {
+		t.Errorf("bitrate>0 should transcode with libx264, got: %v", args)
+	}
+	if !hasBitrate {
+		t.Errorf("bitrate>0 should set -b:v 600k, got: %v", args)
+	}
+	// 不应有 -c:v copy
+	for i, a := range args {
+		if a == "-c:v" && i+1 < len(args) && args[i+1] == "copy" {
+			t.Errorf("bitrate>0 should NOT stream-copy, got: %v", args)
+		}
+	}
+
+	// bitrate=0 → 流拷贝
+	argsCopy := svc.buildRecordingArgs("rtsp://test/stream", "/tmp/out.mp4", model.FormatMP4, false, 0)
+	hasCopy := false
+	for i, a := range argsCopy {
+		if a == "-c:v" && i+1 < len(argsCopy) && argsCopy[i+1] == "copy" {
+			hasCopy = true
+		}
+	}
+	if !hasCopy {
+		t.Errorf("bitrate=0 should stream-copy, got: %v", argsCopy)
 	}
 }
 
