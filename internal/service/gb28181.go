@@ -198,6 +198,13 @@ func (s *GB28181Service) handleSIPMessage(raw string, remoteAddr net.Addr, trans
 		if strings.HasPrefix(method, "SIP/2.0") {
 			statusLine := strings.SplitN(raw, "\r\n", 2)[0]
 			log.Printf("[GB28181] SIP response from %s: %s", remoteAddr, statusLine)
+			// INVITE 的 200 OK 需要发送 ACK 完成会话，设备才会推流
+			if strings.Contains(statusLine, "200") {
+				cseqHdr := parseSIPHeader(raw, "CSeq")
+				if strings.Contains(cseqHdr, "INVITE") {
+					s.sendACKForInvite(raw, remoteAddr, transport)
+				}
+			}
 			return
 		}
 		if method == "" {
@@ -638,6 +645,53 @@ func (s *GB28181Service) InviteStream(ctx context.Context, channelID string) (in
 	s.sendSIPRaw(inviteReq, addr, dev.Transport)
 
 	return rtpPort, nil
+}
+
+// sendACKForInvite 收到 INVITE 的 200 OK 后发送 ACK，完成 SIP 会话。
+// 设备收到 ACK 后才会开始推送 RTP 媒体流。
+func (s *GB28181Service) sendACKForInvite(req string, remoteAddr net.Addr, transport string) {
+	callID := parseSIPHeader(req, "Call-ID")
+	cseq := parseSIPHeader(req, "CSeq") // "1 INVITE"
+	cseqNum := "1"
+	if fields := strings.Fields(cseq); len(fields) > 0 {
+		cseqNum = fields[0]
+	}
+	to := parseSIPHeader(req, "To")   // <sip:channel@domain>;tag=xxx
+	from := parseSIPHeader(req, "From")
+
+	// 请求 URI = sip:user@domain
+	user := extractSIPUser(to)
+	domain := extractSIPDomain(to)
+	reqURI := fmt.Sprintf("sip:%s@%s", user, domain)
+
+	// 本地 IP 和 Via 传输协议
+	var deviceIP string
+	switch a := remoteAddr.(type) {
+	case *net.UDPAddr:
+		deviceIP = a.IP.String()
+	case *net.TCPAddr:
+		deviceIP = a.IP.String()
+	}
+	localIP := s.getLocalIPFor(deviceIP)
+	viaTransport := "UDP"
+	if transport == "TCP" {
+		viaTransport = "TCP"
+	}
+
+	ack := fmt.Sprintf("ACK %s SIP/2.0\r\n"+
+		"Via: SIP/2.0/%s %s:5060;rport;branch=z9hG4bK%s\r\n"+
+		"From: %s\r\n"+
+		"To: %s\r\n"+
+		"Call-ID: %s\r\n"+
+		"CSeq: %s ACK\r\n"+
+		"Max-Forwards: 70\r\n"+
+		"Content-Length: 0\r\n"+
+		"\r\n",
+		reqURI, viaTransport, localIP, generateBranch(),
+		from, to, callID, cseqNum)
+
+	s.sendSIPRaw(ack, remoteAddr, transport)
+	log.Printf("[GB28181] sent ACK for INVITE (call %s)", callID)
 }
 
 // startRTPReceiver 启动 RTP 接收器，解封装 PS 后将 NALU 注入 StreamService。
