@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"log"
-	"os"
 	"runtime"
 	"time"
 
@@ -16,15 +15,17 @@ import (
 type SystemMonitor struct {
 	db       *gorm.DB
 	eventBus *EventBus
+	onvif    *ONVIFService
 	ctx      context.Context
 	cancel   context.CancelFunc
 }
 
-func NewSystemMonitor(db *gorm.DB, eventBus *EventBus) *SystemMonitor {
+func NewSystemMonitor(db *gorm.DB, eventBus *EventBus, onvif *ONVIFService) *SystemMonitor {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SystemMonitor{
 		db:       db,
 		eventBus: eventBus,
+		onvif:    onvif,
 		ctx:      ctx,
 		cancel:   cancel,
 	}
@@ -33,6 +34,7 @@ func NewSystemMonitor(db *gorm.DB, eventBus *EventBus) *SystemMonitor {
 // Start 启动后台监控循环。
 func (m *SystemMonitor) Start() {
 	go m.cameraStatusLoop()
+	go m.timeSyncLoop()
 	go m.systemMetricsLoop()
 }
 
@@ -70,8 +72,89 @@ func (m *SystemMonitor) checkCameraStatus() {
 			m.db.Model(&model.Camera{}).Where("id = ?", cam.ID).
 				Update("status", newStatus)
 			m.eventBus.PublishCameraStatus(cam.ID, cam.Name, newStatus)
+
+			// 摄像头上线时，顺便获取分辨率/编码信息
+			if newStatus == model.CameraStatusOnline {
+				go m.enrichCameraInfo(cam)
+			}
 		}
 	}
+}
+
+// enrichCameraInfo 通过 ONVIF 获取摄像头分辨率/编码信息并更新数据库。
+func (m *SystemMonitor) enrichCameraInfo(cam model.Camera) {
+	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
+	defer cancel()
+
+	info, err := m.onvif.GetVideoCodecInfo(ctx, cam.Brand, cam.IP, cam.Username, cam.Password, cam.NVRChannel)
+	if err != nil || info == nil {
+		// 获取失败不致命，仅记录
+		return
+	}
+	updates := map[string]any{}
+	if info.Codec != "" {
+		updates["codec"] = normalizeCodecName(info.Codec)
+	}
+	if info.Resolution != "" {
+		updates["resolution"] = info.Resolution
+	}
+	if len(updates) > 0 {
+		m.db.Model(&model.Camera{}).Where("id = ?", cam.ID).Updates(updates)
+	}
+}
+
+// normalizeCodecName 将编码名规范化为 "H.264"/"H.265"。
+func normalizeCodecName(codec string) string {
+	c := codec
+	if len(c) >= 4 && (c[:4] == "H264" || c[:4] == "H265") {
+		return c[:1] + "." + c[1:]
+	}
+	return c
+}
+
+// timeSyncLoop 每 10 分钟对在线摄像头执行一次时间同步。
+func (m *SystemMonitor) timeSyncLoop() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			m.syncAllOnlineTimes()
+		}
+	}
+}
+
+// syncAllOnlineTimes 对所有在线摄像头同步时间。
+func (m *SystemMonitor) syncAllOnlineTimes() {
+	var cameras []model.Camera
+	if err := m.db.Where("status = ?", model.CameraStatusOnline).Find(&cameras).Error; err != nil {
+		log.Printf("[monitor] list online cameras: %v", err)
+		return
+	}
+
+	for _, cam := range cameras {
+		if cam.AccessProtocol != "" && cam.AccessProtocol != model.ProtocolRTSP {
+			continue // 只同步 RTSP 摄像头
+		}
+		m.syncCameraTime(cam)
+	}
+}
+
+// syncCameraTime 同步单个摄像头时间。
+func (m *SystemMonitor) syncCameraTime(cam model.Camera) {
+	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
+	defer cancel()
+
+	if err := m.onvif.SyncCameraTime(ctx, cam.IP, cam.Username, cam.Password, cam.NVRChannel); err != nil {
+		log.Printf("[monitor] camera %d (%s) time sync failed: %v", cam.ID, cam.IP, err)
+		return
+	}
+	now := time.Now()
+	m.db.Model(&model.Camera{}).Where("id = ?", cam.ID).Update("last_time_sync", now)
+	m.eventBus.PublishTimeSync(cam.ID, true, "定时同步成功")
 }
 
 // probeCameraStatus 多策略探活摄像头。
@@ -119,11 +202,6 @@ func (m *SystemMonitor) broadcastMetrics() {
 		"mem_alloc_mb":   float64(mem.Alloc) / 1024 / 1024,
 		"mem_sys_mb":     float64(mem.Sys) / 1024 / 1024,
 		"uptime_seconds": time.Since(startTime).Seconds(),
-	}
-
-	// 磁盘剩余空间（录像目录）
-	if stat, err := os.Stat("."); err == nil {
-		_ = stat
 	}
 
 	m.eventBus.PublishSystemMetrics(metrics)

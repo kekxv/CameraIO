@@ -760,6 +760,89 @@ func TestXmlEscape(t *testing.T) {
 	}
 }
 
+// ---------- 视频编码信息解析测试 ----------
+
+func TestParseVideoCodecInfo(t *testing.T) {
+	body := `<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
+                   xmlns:trt="http://www.onvif.org/ver10/media/wsdl"
+                   xmlns:tt="http://www.onvif.org/ver10/schema">
+  <SOAP-ENV:Body>
+    <trt:GetVideoEncoderConfigurationsResponse>
+      <trt:Configurations token="main">
+        <tt:Encoding>H264</tt:Encoding>
+        <tt:Resolution>
+          <tt:Width>1920</tt:Width>
+          <tt:Height>1080</tt:Height>
+        </tt:Resolution>
+      </trt:Configurations>
+      <trt:Configurations token="sub">
+        <tt:Encoding>H265</tt:Encoding>
+        <tt:Resolution>
+          <tt:Width>640</tt:Width>
+          <tt:Height>360</tt:Height>
+        </tt:Resolution>
+      </trt:Configurations>
+    </trt:GetVideoEncoderConfigurationsResponse>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`
+
+	info := parseVideoCodecInfo(body)
+	if info == nil {
+		t.Fatal("info should not be nil")
+	}
+	if info.Codec != "H264" {
+		t.Errorf("codec = %q, want H264", info.Codec)
+	}
+	if info.Width != 1920 || info.Height != 1080 {
+		t.Errorf("resolution = %dx%d, want 1920x1080", info.Width, info.Height)
+	}
+	if info.Resolution != "1920x1080" {
+		t.Errorf("resolution string = %q, want 1920x1080", info.Resolution)
+	}
+}
+
+func TestParseVideoCodecInfo_Empty(t *testing.T) {
+	// 空响应不应 panic，返回空结构
+	info := parseVideoCodecInfo("")
+	if info == nil {
+		t.Fatal("info should not be nil")
+	}
+	if info.Resolution != "" {
+		t.Errorf("expected empty resolution, got %q", info.Resolution)
+	}
+}
+
+func TestParseVideoCodecInfo_NoConfigs(t *testing.T) {
+	body := `<SOAP-ENV:Envelope><SOAP-ENV:Body><trt:GetVideoEncoderConfigurationsResponse/></SOAP-ENV:Body></SOAP-ENV:Envelope>`
+	info := parseVideoCodecInfo(body)
+	if info == nil || info.Codec != "" {
+		t.Error("expected empty info for no configs")
+	}
+}
+
+func TestNormalizeCodecName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"H264", "H.264"},
+		{"H265", "H.265"},
+		{"H.264", "H.264"},
+		{"H.265", "H.265"},
+		{"HEVC", "HEVC"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeCodecName(tt.input)
+			if got != tt.expected {
+				t.Errorf("normalizeCodecName(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 // ---------- Codec 规范化测试 ----------
 
 func TestNormalizeCodec(t *testing.T) {

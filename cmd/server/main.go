@@ -45,7 +45,7 @@ func main() {
 	streamSvc := service.NewStreamService(db)
 	recorderSvc := service.NewRecorderService(db, cfg)
 	eventBus := service.NewEventBus()
-	monitor := service.NewSystemMonitor(db, eventBus)
+	monitor := service.NewSystemMonitor(db, eventBus, onvifSvc)
 	gb28181Svc := service.NewGB28181Service(cfg, db, eventBus, streamSvc)
 	localCamSvc := service.NewLocalCameraService()
 	discoverySvc := service.NewDiscoveryService(onvifSvc)

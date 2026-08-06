@@ -17,6 +17,10 @@ type Camera struct {
 	AutoTuneEnabled   bool      `json:"auto_tune_enabled" gorm:"default:true"`
 	Status            string    `json:"status" gorm:"type:varchar(16);default:offline"`
 	LastTimeSync      *time.Time `json:"last_time_sync,omitempty"`
+	// Codec: 视频编码格式（H.264 / H.265），由在线检查时获取
+	Codec string `json:"codec,omitempty" gorm:"type:varchar(16)"`
+	// Resolution: 视频分辨率（如 1920x1080），由在线检查时获取
+	Resolution string `json:"resolution,omitempty" gorm:"type:varchar(32)"`
 
 	// ---- 设备类型 ----
 	// DeviceType: "ipc" (网络摄像机) / "nvr" (网络录像机) / "dvr" (数字录像机) / "encoder" (编码器)

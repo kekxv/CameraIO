@@ -393,6 +393,122 @@ func replaceXMLValue(xml, tag, newValue string) string {
 	return re.ReplaceAllString(xml, "${1}"+newValue+"${3}")
 }
 
+// ---------- 视频编码信息获取 ----------
+
+// VideoCodecInfo 视频编码信息。
+type VideoCodecInfo struct {
+	Codec      string `json:"codec"`      // "H.264" / "H.265" / ""
+	Width      int    `json:"width"`      // 分辨率宽
+	Height     int    `json:"height"`     // 分辨率高
+	Resolution string `json:"resolution"` // "1920x1080"
+}
+
+// GetVideoCodecInfo 获取摄像头的视频编码格式和分辨率。
+// 海康优先走 ISAPI，其他走 ONVIF。nvrChannel 为 NVR 通道号。
+func (s *ONVIFService) GetVideoCodecInfo(ctx context.Context, brand, ip, user, pass string, nvrChannel int) (*VideoCodecInfo, error) {
+	if strings.EqualFold(brand, "hikvision") {
+		if info, err := s.getCodecInfoViaISAPI(ctx, ip, user, pass, nvrChannel); err == nil && info != nil {
+			return info, nil
+		}
+	}
+	return s.getCodecInfoViaONVIF(ctx, ip, user, pass, nvrChannel)
+}
+
+// getCodecInfoViaISAPI 通过海康 ISAPI 获取编码信息。
+func (s *ONVIFService) getCodecInfoViaISAPI(ctx context.Context, ip, user, pass string, nvrChannel int) (*VideoCodecInfo, error) {
+	url := fmt.Sprintf("http://%s/ISAPI/System/Video/encodingChannels", ip)
+	if nvrChannel > 0 {
+		url += fmt.Sprintf("?channel=%d", nvrChannel)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(user, pass)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("ISAPI get encodingChannels: %s", resp.Status)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	body := string(data)
+	info := &VideoCodecInfo{
+		Codec: extractXMLTagValue(body, "videoCodecType"),
+	}
+	if w := extractXMLTagValue(body, "videoResolutionWidth"); w != "" {
+		fmt.Sscanf(w, "%d", &info.Width)
+	}
+	if h := extractXMLTagValue(body, "videoResolutionHeight"); h != "" {
+		fmt.Sscanf(h, "%d", &info.Height)
+	}
+	if info.Width > 0 && info.Height > 0 {
+		info.Resolution = fmt.Sprintf("%dx%d", info.Width, info.Height)
+	}
+	return info, nil
+}
+
+// getCodecInfoViaONVIF 通过 ONVIF GetVideoEncoderConfigurations 获取编码信息。
+func (s *ONVIFService) getCodecInfoViaONVIF(ctx context.Context, ip, user, pass string, nvrChannel int) (*VideoCodecInfo, error) {
+	endpoint, err := s.probeDeviceEndpoint(ctx, ip, user, pass)
+	if err != nil {
+		return nil, err
+	}
+	getBody := `<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
+                   xmlns:trt="http://www.onvif.org/ver10/media/wsdl">
+  <SOAP-ENV:Body>
+    <trt:GetVideoEncoderConfigurations/>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`
+	respBody, err := s.callONVIF(ctx, endpoint, user, pass, getBody, "http://www.onvif.org/ver10/media/wsdl/GetVideoEncoderConfigurations")
+	if err != nil {
+		return nil, err
+	}
+	return parseVideoCodecInfo(respBody), nil
+}
+
+// parseVideoCodecInfo 从 GetVideoEncoderConfigurations 响应中解析编码信息。
+func parseVideoCodecInfo(body string) *VideoCodecInfo {
+	type resolution struct {
+		Width  int `xml:"Width"`
+		Height int `xml:"Height"`
+	}
+	type config struct {
+		Encoding   string     `xml:"Encoding"`
+		Resolution resolution `xml:"Resolution"`
+	}
+	type env struct {
+		Body struct {
+			Resp struct {
+				Configs []config `xml:"Configurations"`
+			} `xml:"GetVideoEncoderConfigurationsResponse"`
+		} `xml:"Body"`
+	}
+	var e env
+	if err := xml.Unmarshal([]byte(body), &e); err != nil {
+		return &VideoCodecInfo{}
+	}
+	if len(e.Body.Resp.Configs) == 0 {
+		return &VideoCodecInfo{}
+	}
+	c := e.Body.Resp.Configs[0]
+	info := &VideoCodecInfo{
+		Codec:  c.Encoding,
+		Width:  c.Resolution.Width,
+		Height: c.Resolution.Height,
+	}
+	if info.Width > 0 && info.Height > 0 {
+		info.Resolution = fmt.Sprintf("%dx%d", info.Width, info.Height)
+	}
+	return info
+}
+
 // ---------- ONVIF: 设备发现 ----------
 
 func (s *ONVIFService) probeDeviceEndpoint(ctx context.Context, ip, user, pass string) (string, error) {

@@ -113,6 +113,14 @@
               <span class="text-slate-400 flex-shrink-0">RTSP:</span>
               <span class="font-mono truncate min-w-0" :title="cam.rtsp_url">{{ cam.rtsp_url }}</span>
             </div>
+            <div v-if="cam.resolution || cam.codec" class="flex items-center gap-1">
+              <span class="text-slate-400 flex-shrink-0">视频:</span>
+              <span v-if="cam.resolution" class="font-mono">{{ cam.resolution }}</span>
+              <span v-if="cam.codec" class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                :class="cam.codec === 'H.265' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'">
+                {{ cam.codec }}
+              </span>
+            </div>
             <div v-if="cam.last_time_sync" class="flex items-center gap-1">
               <span class="text-slate-400 flex-shrink-0">对时:</span>
               <span>{{ formatTime(cam.last_time_sync) }}</span>
