@@ -45,6 +45,7 @@ func NewRecorderService(db *gorm.DB, cfg *pkg.Config) *RecorderService {
 }
 
 // Shutdown 停止所有正在进行的录像任务（优雅关闭时调用）。
+// 会更新数据库状态，避免重启后留下"录制中"的孤儿记录。
 func (s *RecorderService) Shutdown() {
 	s.mu.Lock()
 	tasks := make([]*recordTask, 0, len(s.tasks))
@@ -56,6 +57,7 @@ func (s *RecorderService) Shutdown() {
 	for _, t := range tasks {
 		t.cancel()
 		t.cmd.Wait()
+		s.finalizeRecording(t.recording.ID, t)
 	}
 }
 
@@ -409,7 +411,7 @@ func (s *RecorderService) GetActiveRecordings() ([]model.Recording, error) {
 	return recs, nil
 }
 
-// watchTask 监控 FFmpeg 进程退出。
+// watchTask 监控 FFmpeg 进程退出并更新状态。
 func (s *RecorderService) watchTask(recordingID uint, task *recordTask) {
 	err := task.cmd.Wait()
 	s.mu.Lock()
@@ -417,45 +419,56 @@ func (s *RecorderService) watchTask(recordingID uint, task *recordTask) {
 	if stillActive {
 		delete(s.tasks, recordingID)
 	}
+	forceStopped := task.forceStopped
 	s.mu.Unlock()
 
-	if stillActive {
-		var fileSize int64
-		if info, statErr := os.Stat(task.recording.FilePath); statErr == nil {
-			fileSize = info.Size()
-		}
+	if !stillActive {
+		return // 已被其他路径处理
+	}
 
-		// 区分"到期强制停止"（正常完成）与"异常退出"（失败）
-		s.mu.Lock()
-		forceStopped := task.forceStopped
-		s.mu.Unlock()
-
-		if forceStopped {
-			log.Printf("[recorder] recording %d stopped by watchdog (completed)", recordingID)
-			s.db.Model(task.recording).Updates(map[string]any{
-				"end_time":  time.Now(),
-				"file_size": fileSize,
-				"duration":  int(time.Now().Sub(task.recording.StartTime).Seconds()),
-				"status":    model.RecordingStatusCompleted,
-			})
-			return
+	// FFmpeg 退出，记录状态。文件有效 → completed（可下载），无文件 → failed
+	stderrInfo := ""
+	if task.stderr != nil {
+		last := task.stderr.String()
+		if len(last) > 500 {
+			last = last[len(last)-500:]
 		}
+		stderrInfo = "\n" + last
+	}
+	if forceStopped {
+		log.Printf("[recorder] recording %d stopped by watchdog (completed)", recordingID)
+	} else {
+		log.Printf("[recorder] recording %d ffmpeg exited: %v%s", recordingID, err, stderrInfo)
+	}
+	s.finalizeRecording(recordingID, task)
+}
 
-		// FFmpeg 异常退出
-		stderrInfo := ""
-		if task.stderr != nil {
-			last := task.stderr.String()
-			if len(last) > 500 {
-				last = last[len(last)-500:]
-			}
-			stderrInfo = "\n" + last
-		}
-		log.Printf("[recorder] recording %d ffmpeg exited unexpectedly: %v%s", recordingID, err, stderrInfo)
-		s.db.Model(task.recording).Updates(map[string]any{
-			"end_time":  time.Now(),
+// finalizeRecording 根据文件是否有效更新录像状态：
+// 有文件 → completed（可下载/查看），无文件 → failed。
+func (s *RecorderService) finalizeRecording(recordingID uint, task *recordTask) {
+	var fileSize int64
+	if info, err := os.Stat(task.recording.FilePath); err == nil {
+		fileSize = info.Size()
+	}
+	now := time.Now()
+
+	if fileSize > 0 {
+		// 文件有效 → completed
+		s.db.Model(&model.Recording{}).Where("id = ?", recordingID).Updates(map[string]any{
+			"end_time":  now,
 			"file_size": fileSize,
+			"duration":  probeVideoDuration(task.recording.FilePath),
+			"status":    model.RecordingStatusCompleted,
+		})
+		log.Printf("[recorder] recording %d finalized as completed (%d bytes)", recordingID, fileSize)
+	} else {
+		// 无文件 → failed
+		s.db.Model(&model.Recording{}).Where("id = ?", recordingID).Updates(map[string]any{
+			"end_time":  now,
+			"duration":  int(now.Sub(task.recording.StartTime).Seconds()),
 			"status":    model.RecordingStatusFailed,
 		})
+		log.Printf("[recorder] recording %d finalized as failed (no valid file)", recordingID)
 	}
 }
 
