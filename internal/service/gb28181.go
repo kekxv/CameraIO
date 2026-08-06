@@ -193,6 +193,12 @@ func (s *GB28181Service) handleSIPMessage(raw string, remoteAddr net.Addr, trans
 	case "ACK":
 		// ACK 无需处理
 	default:
+		// SIP 响应（如 INVITE 的 200 OK）
+		if strings.HasPrefix(method, "SIP/2.0") {
+			statusLine := strings.SplitN(raw, "\r\n", 2)[0]
+			log.Printf("[GB28181] SIP response from %s: %s", remoteAddr, statusLine)
+			return
+		}
 		if method == "" {
 			// 空方法：通常是截断的 UDP 包或非 SIP 探测，静默忽略
 			log.Printf("[GB28181] ignoring non-SIP/truncated message from %s (%d bytes)", remoteAddr, len(raw))
@@ -576,6 +582,8 @@ func (s *GB28181Service) InviteStream(ctx context.Context, channelID string) (in
 		IP:   net.ParseIP(dev.IP),
 		Port: dev.Port,
 	}
+	log.Printf("[GB28181] sending INVITE to %s:%d via %s (channel %s, RTP port %d)",
+		dev.IP, dev.Port, dev.Transport, channelID, rtpPort)
 	s.sendSIPRaw(inviteReq, addr, dev.Transport)
 
 	return rtpPort, nil
@@ -765,20 +773,30 @@ func (s *GB28181Service) sendSIPResponse(req string, remoteAddr net.Addr, transp
 }
 
 func (s *GB28181Service) sendSIPRaw(msg string, remoteAddr net.Addr, transport string) {
-	switch addr := remoteAddr.(type) {
-	case *net.UDPAddr:
-		s.udpConn.WriteToUDP([]byte(msg), addr)
-	case *net.TCPAddr:
-		// 通过已维护的 TCP 连接发送
+	// 按 transport 优先（UDPAddr 可能是由 TCP 设备构造的，此时应走 TCP 连接）
+	if transport == "TCP" {
+		var key string
+		switch a := remoteAddr.(type) {
+		case *net.UDPAddr:
+			key = net.JoinHostPort(a.IP.String(), fmt.Sprintf("%d", a.Port))
+		case *net.TCPAddr:
+			key = a.String()
+		}
 		s.mu.RLock()
-		conn, ok := s.tcpConns[addr.String()]
+		conn, ok := s.tcpConns[key]
 		s.mu.RUnlock()
 		if !ok {
-			log.Printf("[GB28181] TCP connection to %s not found", addr.String())
+			log.Printf("[GB28181] TCP connection to %s not found, falling back to UDP", key)
+		} else {
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_, _ = conn.Write([]byte(msg))
 			return
 		}
-		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		_, _ = conn.Write([]byte(msg))
+	}
+
+	// UDP 发送
+	if addr, ok := remoteAddr.(*net.UDPAddr); ok {
+		s.udpConn.WriteToUDP([]byte(msg), addr)
 	}
 }
 
