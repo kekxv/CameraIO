@@ -616,6 +616,7 @@ func (s *GB28181Service) InviteStream(ctx context.Context, channelID string) (in
 	localIP := s.getLocalIPFor(dev.IP)
 	log.Printf("[GB28181] sending INVITE to %s:%d via %s (channel %s, RTP port %d, SDP IP %s)",
 		dev.IP, dev.Port, dev.Transport, channelID, rtpPort, localIP)
+	log.Printf("[GB28181] INVITE:\n%s", inviteReq)
 	s.sendSIPRaw(inviteReq, addr, dev.Transport)
 
 	return rtpPort, nil
@@ -812,7 +813,7 @@ func (s *GB28181Service) buildINVITE(channelID string, dev *DeviceSession, sdp, 
 		callID,
 		cseq,
 		subject,
-		localIP, localIP,
+		s.cfg.SIPServerID, localIP,
 		len(sdp),
 		sdp)
 }
