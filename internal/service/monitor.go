@@ -68,8 +68,8 @@ func (m *SystemMonitor) enrichAllOnline() {
 	}
 
 	for _, cam := range cameras {
-		// GB28181 且品牌为自定义（纯 SIP）时跳过，避免无效的 ONVIF 探测
-		if cam.AccessProtocol == model.ProtocolGB28181 && (cam.Brand == "" || cam.Brand == model.BrandCustom) {
+		// 没有 ONVIF/ISAPI 凭据的设备跳过（如纯 SIP 注册的 GB28181 设备）
+		if cam.Username == "" {
 			continue
 		}
 		m.enrichCameraInfo(cam)

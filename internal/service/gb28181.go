@@ -116,7 +116,7 @@ func (s *GB28181Service) Stop() {
 // ---------- SIP UDP 读取循环 ----------
 
 func (s *GB28181Service) readUDPLoop() {
-	buf := make([]byte, 4096)
+	buf := make([]byte, 65536) // GB28181 的 XML 消息可能较大（如 Catalog），需足够大
 	for {
 		n, remoteAddr, err := s.udpConn.ReadFromUDP(buf)
 		if err != nil {
@@ -146,7 +146,7 @@ func (s *GB28181Service) acceptTCPLoop() {
 
 func (s *GB28181Service) handleTCPConn(conn net.Conn) {
 	defer conn.Close()
-	buf := make([]byte, 4096)
+	buf := make([]byte, 65536)
 	for {
 		conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 		n, err := conn.Read(buf)
@@ -173,7 +173,12 @@ func (s *GB28181Service) handleSIPMessage(raw string, remoteAddr net.Addr, trans
 	case "ACK":
 		// ACK 无需处理
 	default:
-		log.Printf("[GB28181] unhandled SIP method: %s from %s", method, remoteAddr)
+		if method == "" {
+			// 空方法：通常是截断的 UDP 包或非 SIP 探测，静默忽略
+			log.Printf("[GB28181] ignoring non-SIP/truncated message from %s (%d bytes)", remoteAddr, len(raw))
+		} else {
+			log.Printf("[GB28181] unhandled SIP method: %s from %s", method, remoteAddr)
+		}
 	}
 }
 
