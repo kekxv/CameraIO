@@ -307,13 +307,31 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 }
 
 func (s *GB28181Service) sendRegisterOK(req string, remoteAddr net.Addr, transport, callID, cseq string, expires int) {
-	resp := buildSIPResponse(req, 200, "OK", map[string]string{
-		"Call-ID": callID,
-		"CSeq":    cseq,
-		"Expires": fmt.Sprintf("%d", expires),
-		"Date":    time.Now().UTC().Format("2006-01-02T15:04:05"),
-		"Server":  "CameraIO/1.0",
-	})
+	// 提取并回显 Contact（海康设备需要 Contact 确认注册成功）
+	contact := parseSIPHeader(req, "Contact")
+	to := parseSIPHeader(req, "To")
+
+	// 构造完整的 200 OK（回显 Contact，To 加 tag）
+	via := parseSIPHeader(req, "Via")
+	from := parseSIPHeader(req, "From")
+	callIDHdr := parseSIPHeader(req, "Call-ID")
+	cseqHdr := parseSIPHeader(req, "CSeq")
+	tag := generateBranch()
+
+	resp := fmt.Sprintf("SIP/2.0 200 OK\r\n"+
+		"Via: %s\r\n"+
+		"From: %s\r\n"+
+		"To: %s;tag=%s\r\n"+
+		"Call-ID: %s\r\n"+
+		"CSeq: %s\r\n"+
+		"Contact: %s\r\n"+
+		"Expires: %d\r\n"+
+		"Date: %s\r\n"+
+		"Server: CameraIO/1.0\r\n"+
+		"Content-Length: 0\r\n"+
+		"\r\n",
+		via, from, to, tag, callIDHdr, cseqHdr, contact, expires,
+		time.Now().UTC().Format("2006-01-02T15:04:05"))
 	s.sendSIPRaw(resp, remoteAddr, transport)
 }
 
