@@ -69,6 +69,20 @@ export const setCameraCodec = (id, codec) => api.post(`/cameras/${id}/set-codec`
 export const setCameraNetwork = (id, config) => api.post(`/cameras/${id}/set-network`, config).then((r) => r.data.data)
 export const captureSnapshot = (id) => api.get(`/cameras/${id}/snapshot`, { responseType: 'blob' }).then((r) => r.data)
 
+// responseType 为 blob 时，Axios 也会把非 2xx 的 JSON 错误体包装成 Blob。
+export const getAPIErrorMessage = async (err) => {
+  const data = err.response?.data
+  if (data instanceof Blob) {
+    const text = await data.text()
+    try {
+      return JSON.parse(text).message || text || err.message
+    } catch {
+      return text || err.message
+    }
+  }
+  return data?.message || err.message
+}
+
 // ---------- Local Cameras ----------
 
 export const listLocalCameras = () => api.get('/local-cameras').then((r) => r.data.data)

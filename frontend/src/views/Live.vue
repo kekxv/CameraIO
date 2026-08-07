@@ -253,7 +253,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { listCameras, startStream, stopStream, startRecording, stopRecording, captureSnapshot, connectEventBus } from '../api'
+import { listCameras, startStream, stopStream, startRecording, stopRecording, captureSnapshot, getAPIErrorMessage, connectEventBus } from '../api'
 import AppIcon from '../components/AppIcon.vue'
 
 const cameras = ref([])
@@ -369,7 +369,7 @@ const takeSnapshot = async (cam) => {
     snapshotURL.value = URL.createObjectURL(jpeg)
     snapshotTarget.value = cam
   } catch (err) {
-    alert('抓拍失败: ' + (err.response?.data?.message || err.message))
+    alert('抓拍失败: ' + await getAPIErrorMessage(err))
   } finally {
     delete capturing.value[cam.id]
   }

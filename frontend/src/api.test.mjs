@@ -6,7 +6,7 @@ globalThis.localStorage = {
   removeItem: () => {},
 }
 
-const { default: api, captureSnapshot } = await import('./api.js')
+const { default: api, captureSnapshot, getAPIErrorMessage } = await import('./api.js')
 
 test('captureSnapshot requests the native JPEG endpoint as a blob', async () => {
   const originalAdapter = api.defaults.adapter
@@ -31,4 +31,15 @@ test('captureSnapshot requests the native JPEG endpoint as a blob', async () => 
   } finally {
     api.defaults.adapter = originalAdapter
   }
+})
+
+test('getAPIErrorMessage reads a JSON error Blob from a snapshot request', async () => {
+  const message = await getAPIErrorMessage({
+    message: 'Request failed with status code 502',
+    response: {
+      data: new Blob([JSON.stringify({ message: 'camera snapshot returned 401 Unauthorized' })], { type: 'application/json' }),
+    },
+  })
+
+  assert.equal(message, 'camera snapshot returned 401 Unauthorized')
 })

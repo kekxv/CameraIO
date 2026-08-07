@@ -266,10 +266,6 @@ func (s *CameraService) CaptureSnapshot(ctx context.Context, cameraID uint) ([]b
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("camera snapshot returned %s", resp.Status)
 	}
-	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
-	if !strings.HasPrefix(contentType, "image/jpeg") && !strings.HasPrefix(contentType, "image/jpg") {
-		return nil, fmt.Errorf("camera snapshot returned unexpected content type %q", contentType)
-	}
 	jpeg, err := io.ReadAll(io.LimitReader(resp.Body, maxSnapshotBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read camera snapshot: %w", err)
@@ -277,7 +273,15 @@ func (s *CameraService) CaptureSnapshot(ctx context.Context, cameraID uint) ([]b
 	if len(jpeg) == 0 || len(jpeg) > maxSnapshotBytes {
 		return nil, fmt.Errorf("camera snapshot has invalid size")
 	}
+	if !isJPEG(jpeg) {
+		return nil, fmt.Errorf("camera snapshot is not JPEG (content type %q)", strings.ToLower(resp.Header.Get("Content-Type")))
+	}
 	return jpeg, nil
+}
+
+// isJPEG 通过 JPEG 的 SOI/EOI 标记确认数据格式，兼容返回错误 MIME 类型的设备。
+func isJPEG(data []byte) bool {
+	return len(data) >= 4 && data[0] == 0xff && data[1] == 0xd8 && data[len(data)-2] == 0xff && data[len(data)-1] == 0xd9
 }
 
 func fetchSnapshot(ctx context.Context, snapshotURI, username, password string) (*http.Response, error) {

@@ -188,7 +188,7 @@ func TestCameraSnapshotReturnsNotFoundForMissingCamera(t *testing.T) {
 	}
 }
 
-func TestCameraSnapshotReturnsNativeJPEGWithoutStartingStream(t *testing.T) {
+func TestCameraSnapshotAcceptsJPEGWithGenericContentTypeWithoutStartingStream(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -217,7 +217,7 @@ func TestCameraSnapshotReturnsNativeJPEGWithoutStartingStream(t *testing.T) {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Content-Type", "application/octet-stream")
 			_, _ = w.Write([]byte{0xff, 0xd8, 0xff, 0xd9})
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)

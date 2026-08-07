@@ -12,6 +12,15 @@ import (
 	"CameraIO/internal/model"
 )
 
+func TestIsJPEG(t *testing.T) {
+	if !isJPEG([]byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0xff, 0xd9}) {
+		t.Fatal("valid JPEG bytes should be accepted")
+	}
+	if isJPEG([]byte("<html>not an image</html>")) {
+		t.Fatal("HTML bytes must not be accepted as JPEG")
+	}
+}
+
 func TestGetSnapshotURI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/onvif/media_service" {
