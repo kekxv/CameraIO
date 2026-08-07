@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"CameraIO/internal/model"
 	"CameraIO/internal/pkg"
 	"CameraIO/internal/service"
 
@@ -18,6 +19,11 @@ import (
 
 // setupTestHandler 创建测试用的 Handler（内存 SQLite）。
 func setupTestHandler(t *testing.T) *Handler {
+	h, _ := setupTestHandlerWithDB(t)
+	return h
+}
+
+func setupTestHandlerWithDB(t *testing.T) (*Handler, *gorm.DB) {
 	t.Helper()
 	// 每个测试使用独立的内存数据库
 	dbName := fmt.Sprintf("file:test_%d?mode=memory&cache=shared", time.Now().UnixNano())
@@ -39,7 +45,7 @@ func setupTestHandler(t *testing.T) *Handler {
 	scheduleSvc := service.NewScheduleService(db, recorderSvc)
 
 	handler := NewHandler(userSvc, cameraSvc, streamSvc, recorderSvc, eventBus, localCamSvc, discoverySvc, scheduleSvc, jwtCfg)
-	return handler
+	return handler, db
 }
 
 // createTestUser 创建测试用户并返回 JWT token。
@@ -319,6 +325,49 @@ func TestStopRecording_NotActive(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("stop non-active status = %d, want 500", w.Code)
+	}
+}
+
+func TestStopRecording_ReturnsDownloadURL(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+
+	recording := &model.Recording{
+		CameraID:  7,
+		FilePath:  "/tmp/kiosk-recording.mp4",
+		StartTime: time.Now().Add(-time.Minute),
+		Status:    model.RecordingStatusRecording,
+		Format:    model.FormatMP4,
+	}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/recordings/stop", bytes.NewBufferString(fmt.Sprintf(`{"recording_id":%d}`, recording.ID)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("stop status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			RecordingID uint   `json:"recording_id"`
+			DownloadURL string `json:"download_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Data.RecordingID != recording.ID {
+		t.Fatalf("recording_id = %d, want %d", resp.Data.RecordingID, recording.ID)
+	}
+	wantURL := fmt.Sprintf("/api/v1/recordings/%d/download", recording.ID)
+	if resp.Data.DownloadURL != wantURL {
+		t.Fatalf("download_url = %q, want %q", resp.Data.DownloadURL, wantURL)
 	}
 }
 

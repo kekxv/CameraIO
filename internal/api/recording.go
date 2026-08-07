@@ -38,7 +38,11 @@ func (h *Handler) StopRecording(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, gin.H{"message": "recording stopped"})
+	ok(c, gin.H{
+		"message":      "recording stopped",
+		"recording_id": req.RecordingID,
+		"download_url": fmt.Sprintf("/api/v1/recordings/%d/download", req.RecordingID),
+	})
 }
 
 func (h *Handler) ListRecordings(c *gin.Context) {
