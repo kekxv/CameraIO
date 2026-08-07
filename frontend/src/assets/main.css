@@ -4,6 +4,21 @@
 
 :root {
   font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --chrome72-flex-gap-fallback: 1;
+}
+
+@supports not (gap: 1rem) {
+  .compat-flex-gap-1 > * + * { margin-left: 0.25rem; }
+  .compat-flex-gap-2 > * + * { margin-left: 0.5rem; }
+  .compat-flex-gap-3 > * + * { margin-left: 0.75rem; }
+  .compat-flex-gap-4 > * + * { margin-left: 1rem; }
+  .compat-flex-column > * + * { margin-top: 0.75rem; }
+}
+
+@supports not (aspect-ratio: 1 / 1) {
+  .compat-aspect-video { height: 0; padding-top: 56.25%; position: relative; }
+  .compat-aspect-video > img,
+  .compat-aspect-video > video { position: absolute; inset: 0; width: 100%; height: 100%; }
 }
 
 body {

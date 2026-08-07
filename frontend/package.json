@@ -7,15 +7,18 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/api.test.mjs"
+    "test": "node --test",
+    "test:chrome72": "npm run build && node scripts/assert-chrome72-build.mjs"
   },
   "dependencies": {
     "axios": "^1.7.0",
+    "core-js": "^3.50.0",
     "pinia": "^2.2.0",
     "vue": "^3.5.0",
     "vue-router": "^4.4.0"
   },
   "devDependencies": {
+    "@vitejs/plugin-legacy": "^5.4.3",
     "@vitejs/plugin-vue": "^5.1.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",
