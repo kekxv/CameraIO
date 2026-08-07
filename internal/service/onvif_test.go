@@ -28,6 +28,41 @@ func TestSnapshotURLForLogRemovesCredentialsAndQuery(t *testing.T) {
 	}
 }
 
+func TestFetchSnapshotNegotiatesBasicAuthentication(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			if authorization := r.Header.Get("Authorization"); authorization != "" {
+				t.Errorf("initial snapshot request authorization = %q, want empty", authorization)
+			}
+			if accept := r.Header.Get("Accept"); accept != "image/jpeg" {
+				t.Errorf("Accept = %q, want image/jpeg", accept)
+			}
+			w.Header().Set("WWW-Authenticate", `Basic realm="camera"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "admin" || pass != "pass" {
+			t.Errorf("BasicAuth() = %q/%q/%v", user, pass, ok)
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte{0xff, 0xd8, 0xff, 0xd9})
+	}))
+	defer server.Close()
+
+	uriWithCredentials := strings.Replace(server.URL, "://", "://uri-user:uri-password@", 1)
+	resp, err := fetchSnapshot(context.Background(), uriWithCredentials, "admin", "pass")
+	if err != nil {
+		t.Fatalf("fetchSnapshot() error = %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || requests != 2 {
+		t.Fatalf("status=%d requests=%d, want 200 and 2", resp.StatusCode, requests)
+	}
+}
+
 func TestGetSnapshotURI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/onvif/media_service" {

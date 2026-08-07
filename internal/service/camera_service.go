@@ -304,9 +304,10 @@ func fetchSnapshot(ctx context.Context, snapshotURI, username, password string) 
 	if err != nil {
 		return nil, fmt.Errorf("invalid snapshot URI")
 	}
-	if username != "" {
-		req.SetBasicAuth(username, password)
-	}
+	// Some ONVIF devices include Basic credentials in the returned URI. Do not
+	// send them before the server has issued an authentication challenge.
+	req.URL.User = nil
+	req.Header.Set("Accept", "image/jpeg")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusUnauthorized || username == "" {
 		return resp, err
@@ -314,15 +315,19 @@ func fetchSnapshot(ctx context.Context, snapshotURI, username, password string) 
 
 	challenge := resp.Header.Get("WWW-Authenticate")
 	resp.Body.Close()
-	authorization, ok := buildDigestAuthorization(challenge, username, password, req.Method, req.URL.RequestURI())
-	if !ok {
-		return nil, fmt.Errorf("camera snapshot authentication failed")
-	}
 	retry, err := http.NewRequestWithContext(ctx, req.Method, snapshotURI, nil)
 	if err != nil {
 		return nil, fmt.Errorf("invalid snapshot URI")
 	}
-	retry.Header.Set("Authorization", authorization)
+	retry.URL.User = nil
+	retry.Header.Set("Accept", "image/jpeg")
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(challenge)), "basic ") {
+		retry.SetBasicAuth(username, password)
+	} else if authorization, ok := buildDigestAuthorization(challenge, username, password, req.Method, req.URL.RequestURI()); ok {
+		retry.Header.Set("Authorization", authorization)
+	} else {
+		return nil, fmt.Errorf("camera snapshot authentication failed")
+	}
 	return http.DefaultClient.Do(retry)
 }
 
