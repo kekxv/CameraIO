@@ -65,10 +65,10 @@ jobs:
           path: coverage.out
 
   # ===========================================
-  # 前端构建验证
+  # 前端测试与 Chrome 72 兼容构建验证
   # ===========================================
   test-frontend:
-    name: Frontend Build
+    name: Frontend Tests and Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -87,17 +87,11 @@ jobs:
 
       - name: Run frontend tests
         working-directory: frontend
-        run: npm test -- --run
+        run: npm test
 
-      - name: Build frontend
+      - name: Verify Chrome 72 production build
         working-directory: frontend
-        run: npm run build
-
-      - name: Verify build output
-        working-directory: frontend
-        run: |
-          ls -la dist/
-          test -f dist/index.html && echo "✅ frontend build OK"
+        run: npm run test:chrome72
 
   # ===========================================
   # 综合检查 (Linux 快速)

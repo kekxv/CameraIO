@@ -1,55 +1,39 @@
 <template>
-  <div class="flex h-screen bg-slate-50">
-    <!-- 侧边栏 -->
-    <aside class="w-56 bg-slate-900 text-slate-100 flex flex-col">
-      <div class="px-5 py-4 border-b border-slate-800">
-        <h1 class="text-lg font-bold tracking-tight">
-          <span class="text-primary-400">Camera</span><span class="text-white">IO</span>
-        </h1>
-        <p class="text-[11px] text-slate-400 mt-0.5">轻量级 NVR 控制台</p>
-      </div>
+  <div class="app-shell layout-root">
+    <header class="layout-mobile-header">
+      <button class="ui-icon-button" type="button" aria-label="切换导航" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = !mobileNavOpen">
+        <span class="layout-menu-lines" aria-hidden="true"></span>
+      </button>
+      <div class="layout-mobile-brand"><span>Camera</span>IO</div>
+      <button class="layout-mobile-user" type="button" @click="handleLogout">退出</button>
+    </header>
 
-      <nav class="flex-1 px-3 py-4 space-y-1">
-        <router-link
-          v-for="item in navItems"
-          :key="item.to"
-          :to="item.to"
-          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors"
-          :class="$route.path === item.to
-            ? 'bg-primary-600 text-white'
-            : 'text-slate-300 hover:bg-slate-800 hover:text-white'"
-        >
-          <AppIcon :name="item.icon" class="w-4 h-4 flex-shrink-0" />
+    <aside class="layout-sidebar" :class="{ 'layout-sidebar--open': mobileNavOpen }">
+      <div class="layout-brand">
+        <h1><span>Camera</span>IO</h1>
+        <p>轻量级 NVR 控制台</p>
+      </div>
+      <nav class="layout-nav" aria-label="主导航">
+        <router-link v-for="item in navItems" :key="item.to" :to="item.to" class="layout-nav-link compat-flex-gap-3" :class="{ 'layout-nav-link--active': $route.path === item.to }" @click="mobileNavOpen = false">
+          <AppIcon :name="item.icon" class="w-5 h-5 flex-shrink-0" />
           <span>{{ item.label }}</span>
         </router-link>
       </nav>
-
-      <div class="px-3 py-3 border-t border-slate-800">
-        <div class="flex items-center gap-2 px-2 py-1.5 text-xs text-slate-400">
-          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span>{{ currentUser?.username || 'Guest' }}</span>
-        </div>
-        <button
-          @click="handleLogout"
-          class="mt-2 w-full px-3 py-1.5 text-xs rounded text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
-        >
-          退出登录
-        </button>
+      <div class="layout-account">
+        <div class="compat-flex-gap-2 layout-account-name"><span class="layout-account-dot"></span><span>{{ username }}</span></div>
+        <button class="ui-button-secondary layout-logout" type="button" @click="handleLogout">退出登录</button>
       </div>
     </aside>
 
-    <!-- 主内容区 -->
-    <main class="flex-1 overflow-auto flex flex-col">
+    <main class="layout-main">
       <FfmpegBanner />
-      <div class="flex-1 overflow-auto">
-        <router-view />
-      </div>
+      <div class="page-frame"><router-view /></div>
     </main>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { getCurrentUser, logout } from '../api'
 import FfmpegBanner from './FfmpegBanner.vue'
 import AppIcon from './AppIcon.vue'
@@ -59,10 +43,11 @@ const navItems = [
   { to: '/live', label: '实时预览', icon: 'monitor' },
   { to: '/recordings', label: '录像中心', icon: 'film' },
 ]
-
+const mobileNavOpen = ref(false)
 const currentUser = computed(() => getCurrentUser())
-
-const handleLogout = () => {
-  logout()
-}
+const username = computed(() => {
+  const user = currentUser.value
+  return user && user.username ? user.username : 'Guest'
+})
+const handleLogout = () => logout()
 </script>

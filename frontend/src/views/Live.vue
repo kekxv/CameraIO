@@ -1,22 +1,22 @@
 <template>
-  <div class="h-screen flex flex-col bg-slate-50 text-slate-800 overflow-hidden">
+  <div class="live-workspace h-screen flex flex-col text-slate-800 overflow-hidden">
     <!-- 顶部控制栏 -->
-    <div class="flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-200 flex-shrink-0 shadow-sm">
-      <div class="flex items-center gap-4">
+    <div class="ui-card rounded-none border-x-0 border-t-0 flex flex-wrap items-center justify-between px-4 py-2.5 flex-shrink-0 shadow-none">
+      <div class="compat-flex-gap-4">
         <h1 class="text-base font-semibold text-slate-800">实时预览</h1>
-        <div class="flex items-center gap-1.5 text-xs text-slate-500">
+        <div class="compat-flex-gap-1 text-xs text-slate-500">
           <span class="w-1.5 h-1.5 rounded-full" :class="onlineCount > 0 ? 'bg-emerald-500' : 'bg-slate-300'"></span>
           {{ onlineCount }} / {{ cameras.length }} 在线
         </div>
       </div>
       <!-- 当前时间（用于判断延迟） -->
-      <div class="flex items-center gap-2 text-xs text-slate-600 font-mono">
+      <div class="compat-flex-gap-2 text-xs text-slate-600 font-mono">
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <span>{{ nowStr }}</span>
       </div>
-      <div class="flex items-center gap-3 ml-auto">
+      <div class="compat-flex-gap-3 ml-auto">
         <!-- 网格切换 -->
         <div class="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
           <button
@@ -30,7 +30,7 @@
           </button>
         </div>
         <!-- 全屏切换 -->
-        <button @click="toggleFullscreen" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition-colors" title="全屏 (F)">
+        <button @click="toggleFullscreen" class="ui-icon-button" title="全屏 (F)" aria-label="切换全屏">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5m-7 14H4m0 0v-4m0 4l5-5m7 5h4m0 0v-4m0 4l-5-5" />
           </svg>
@@ -62,7 +62,7 @@
         <div
           v-for="cam in visibleCameras"
           :key="cam.id"
-          class="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 group shadow-sm hover:shadow-md transition-shadow"
+          class="live-stream-tile compat-aspect-video relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 group shadow-sm hover:shadow-md transition-shadow"
           :class="{ 'ring-2 ring-primary-500/30': streaming[cam.id] }"
         >
           <!-- 视频画面 -->
@@ -83,7 +83,7 @@
                 </div>
                 <button
                   @click="startStreamFor(cam.id)"
-                  class="px-5 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
+                  class="ui-button-primary"
                 >
                   开始预览
                 </button>
@@ -132,6 +132,7 @@
                 @click="stopStreamFor(cam.id)"
                 class="p-1 rounded-md text-slate-300 hover:text-white hover:bg-white/15 transition-colors"
                 title="停止预览"
+                aria-label="停止预览"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                   <rect x="4" y="4" width="12" height="12" rx="1.5" />
@@ -142,6 +143,7 @@
                 :disabled="capturing[cam.id]"
                 class="p-1 rounded-md text-slate-300 hover:text-white hover:bg-white/15 transition-colors disabled:opacity-50"
                 :title="capturing[cam.id] ? '抓拍中...' : '原生抓拍'"
+                :aria-label="capturing[cam.id] ? '抓拍中' : '原生抓拍'"
               >
                 <span v-if="capturing[cam.id]" class="block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
                 <AppIcon v-else name="camera" class="w-3.5 h-3.5" />
@@ -152,6 +154,7 @@
                 class="p-1 rounded-md transition-colors"
                 :class="recording[cam.id] === 'active' ? 'text-red-400 bg-red-500/20' : 'text-slate-300 hover:text-white hover:bg-white/15'"
                 :title="recording[cam.id] === 'active' ? '停止录像' : '开始录像'"
+                :aria-label="recording[cam.id] === 'active' ? '停止录像' : '开始录像'"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                   <circle cx="10" cy="10" r="6" />
@@ -165,8 +168,8 @@
 
     <!-- 录像设置弹窗 -->
     <transition name="fade">
-      <div v-if="showRecordDialog" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="showRecordDialog = false">
-        <div class="bg-white rounded-xl shadow-xl w-80 p-5">
+      <div v-if="showRecordDialog" class="ui-modal-backdrop" @click.self="showRecordDialog = false">
+        <div class="ui-modal max-w-sm p-5">
           <h3 class="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-1.5">
             <AppIcon name="film" class="w-4 h-4" />
             <span>录像设置</span>
@@ -218,9 +221,9 @@
           </label>
 
           <!-- 操作按钮 -->
-          <div class="flex justify-end gap-2">
-            <button @click="showRecordDialog = false" class="px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-md">取消</button>
-            <button @click="confirmStartRecording" class="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-md text-xs font-medium inline-flex items-center gap-1.5">
+          <div class="compat-flex-gap-2 justify-end">
+            <button @click="showRecordDialog = false" class="ui-button-secondary">取消</button>
+            <button @click="confirmStartRecording" class="ui-button-danger compat-flex-gap-1">
               <AppIcon name="record" class="w-3.5 h-3.5" />
               <span>开始录像</span>
             </button>
@@ -231,14 +234,14 @@
 
     <!-- 原生抓拍结果 -->
     <transition name="fade">
-      <div v-if="snapshotTarget && snapshotURL" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" @click.self="closeSnapshot">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-full flex flex-col overflow-hidden">
+      <div v-if="snapshotTarget && snapshotURL" class="ui-modal-backdrop bg-black/60" @click.self="closeSnapshot">
+        <div class="ui-modal max-w-4xl flex flex-col overflow-hidden">
           <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
             <div>
               <h3 class="text-sm font-semibold text-slate-800">原生抓拍</h3>
               <p class="text-xs text-slate-500 mt-0.5">{{ snapshotTarget.name }} · {{ snapshotTarget.ip }}</p>
             </div>
-            <button @click="closeSnapshot" class="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md" title="关闭">
+            <button @click="closeSnapshot" class="ui-icon-button" title="关闭" aria-label="关闭">
               <AppIcon name="close" class="w-4 h-4" />
             </button>
           </div>

@@ -1,18 +1,18 @@
 <template>
-  <div class="p-6">
+  <div>
     <!-- 页头 -->
-    <div class="flex items-center justify-between mb-4">
+    <div class="ui-page-header">
       <div>
-        <h1 class="text-2xl font-bold text-slate-800">录像中心</h1>
-        <p class="text-sm text-slate-500 mt-1">浏览、预览和下载所有录像文件</p>
+        <h1 class="ui-page-title">录像中心</h1>
+        <p class="ui-page-description">浏览、预览和下载所有录像文件</p>
       </div>
     </div>
 
     <!-- 标签页 -->
-    <div class="flex gap-1 mb-4 bg-slate-100 rounded-lg p-0.5 w-fit">
+    <div class="ui-card compat-flex-gap-1 mb-4 p-1 w-fit">
       <button
         @click="activeTab = 'recordings'"
-        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all inline-flex items-center gap-1.5"
+        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all compat-flex-gap-1"
         :class="activeTab === 'recordings' ? 'bg-white text-primary-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
       >
         <AppIcon name="film" class="w-4 h-4" />
@@ -20,7 +20,7 @@
       </button>
       <button
         @click="activeTab = 'schedules'"
-        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all inline-flex items-center gap-1.5"
+        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all compat-flex-gap-1"
         :class="activeTab === 'schedules' ? 'bg-white text-primary-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
       >
         <AppIcon name="clock" class="w-4 h-4" />
@@ -31,14 +31,14 @@
     <!-- ===== 录像列表标签页 ===== -->
     <template v-if="activeTab === 'recordings'">
       <!-- 筛选栏 -->
-      <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-4 mb-4">
-        <div class="flex flex-wrap items-end gap-3">
+      <div class="ui-card p-4 mb-4">
+        <div class="compat-flex-gap-3 flex-wrap items-end">
           <div>
             <label class="block text-xs font-medium text-slate-500 mb-1">摄像头</label>
             <select
               v-model="filter.cameraId"
               @change="loadRecordings"
-              class="px-3 py-1.5 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              class="ui-select"
             >
               <option :value="null">全部</option>
               <option v-for="cam in cameras" :key="cam.id" :value="cam.id">
@@ -51,7 +51,7 @@
             <select
               v-model="filter.status"
               @change="loadRecordings"
-              class="px-3 py-1.5 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              class="ui-select"
             >
               <option value="">全部</option>
               <option value="recording">录制中</option>
@@ -61,7 +61,7 @@
           </div>
           <button
             @click="loadRecordings"
-            class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-sm transition-colors"
+            class="ui-button-secondary"
           >
             刷新
           </button>
@@ -82,8 +82,9 @@
       </div>
 
       <!-- 录像列表 -->
-      <div v-else class="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-        <table class="min-w-full divide-y divide-slate-200">
+      <div v-else class="ui-card overflow-hidden">
+        <div class="overflow-x-auto">
+        <table class="min-w-full min-w-[860px] divide-y divide-slate-200">
           <thead class="bg-slate-50">
             <tr>
               <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">ID</th>
@@ -133,12 +134,13 @@
                 </span>
               </td>
               <td class="px-4 py-2.5 text-right">
-                <div class="flex items-center justify-end gap-1">
+                <div class="compat-flex-gap-1 justify-end">
                   <button
                     v-if="rec.status === 'completed'"
                     @click="previewRecording(rec)"
-                    class="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition-colors"
+                    class="ui-icon-button"
                     title="预览"
+                    aria-label="预览"
                   >
                     <AppIcon name="eye" class="w-3.5 h-3.5" />
                   </button>
@@ -146,23 +148,26 @@
                     v-if="rec.status === 'completed'"
                     :href="downloadUrl(rec.id)"
                     :download="`recording_${rec.id}.${rec.format || 'mp4'}`"
-                    class="px-2 py-1 text-xs bg-primary-50 hover:bg-primary-100 text-primary-700 rounded transition-colors"
+                    class="ui-icon-button text-primary-700"
                     title="下载"
+                    aria-label="下载"
                   >
                     <AppIcon name="download" class="w-3.5 h-3.5" />
                   </a>
                   <button
                     v-if="rec.status === 'recording'"
                     @click="handleStopRecording(rec)"
-                    class="px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded transition-colors"
+                    class="ui-icon-button text-red-700"
                     title="停止录像"
+                    aria-label="停止录像"
                   >
                     <AppIcon name="stop" class="w-3.5 h-3.5" />
                   </button>
                   <button
                     @click="handleDeleteRecording(rec)"
-                    class="px-2 py-1 text-xs bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 rounded transition-colors"
+                    class="ui-icon-button text-red-700"
                     title="删除"
+                    aria-label="删除"
                   >
                     <AppIcon name="trash" class="w-3.5 h-3.5" />
                   </button>
@@ -171,24 +176,25 @@
             </tr>
           </tbody>
         </table>
+        </div>
 
         <!-- 分页 -->
         <div v-if="totalPages > 1" class="px-4 py-3 border-t border-slate-200 flex items-center justify-between">
           <div class="text-xs text-slate-500">
             第 {{ page }} / {{ totalPages }} 页
           </div>
-          <div class="flex gap-1">
+          <div class="compat-flex-gap-1">
             <button
               @click="goPage(page - 1)"
               :disabled="page <= 1"
-              class="px-3 py-1 text-xs border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50"
+              class="ui-button-secondary disabled:opacity-50"
             >
               上一页
             </button>
             <button
               @click="goPage(page + 1)"
               :disabled="page >= totalPages"
-              class="px-3 py-1 text-xs border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50"
+              class="ui-button-secondary disabled:opacity-50"
             >
               下一页
             </button>
@@ -199,13 +205,13 @@
 
     <!-- ===== 定时录像标签页 ===== -->
     <template v-else>
-      <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-4 mb-4 flex items-center justify-between">
+      <div class="ui-card p-4 mb-4 flex flex-wrap items-center justify-between">
         <p class="text-sm text-slate-600">
           定时计划：到时间自动开始录像，离开时间范围自动停止，每天重复。
         </p>
         <button
           @click="openScheduleDialog(null)"
-          class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md text-sm font-medium transition-colors"
+          class="ui-button-primary"
         >
           + 新建计划
         </button>
@@ -221,7 +227,7 @@
         <div
           v-for="sch in schedules"
           :key="sch.id"
-          class="bg-white rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-shadow"
+          class="ui-card hover:shadow-md transition-shadow"
           :class="{ 'opacity-60': !sch.enabled }"
         >
           <div class="p-4">
@@ -256,25 +262,27 @@
             </div>
           </div>
 
-          <div class="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2">
+          <div class="px-4 py-3 bg-slate-50 border-t border-slate-100 compat-flex-gap-2">
             <button
               @click="toggleSchedule(sch)"
-              class="flex-1 px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors flex items-center justify-center gap-1.5"
+              class="flex-1 ui-button-secondary compat-flex-gap-1"
             >
               <AppIcon :name="sch.enabled ? 'pause' : 'play'" class="w-3.5 h-3.5" />
               <span>{{ sch.enabled ? '停用' : '启用' }}</span>
             </button>
             <button
               @click="openScheduleDialog(sch)"
-              class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
+              class="ui-icon-button"
               title="编辑计划"
+              aria-label="编辑计划"
             >
               <AppIcon name="edit" class="w-3.5 h-3.5" />
             </button>
             <button
               @click="handleDeleteSchedule(sch)"
-              class="px-2 py-1.5 text-xs bg-white border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors"
+              class="ui-icon-button text-red-700"
               title="删除计划"
+              aria-label="删除计划"
             >
               <AppIcon name="trash" class="w-3.5 h-3.5" />
             </button>
@@ -286,10 +294,10 @@
     <!-- 预览对话框 -->
     <div
       v-if="previewRec"
-      class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-8"
+      class="ui-modal-backdrop bg-black/80"
       @click.self="previewRec = null"
     >
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl overflow-hidden">
+      <div class="ui-modal max-w-3xl overflow-hidden">
         <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200">
           <div>
             <h3 class="font-semibold text-slate-800">录像预览 #{{ previewRec.id }}</h3>
@@ -297,13 +305,14 @@
           </div>
           <button
             @click="previewRec = null"
-            class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-100 text-slate-500"
+            class="ui-icon-button"
             title="关闭"
+            aria-label="关闭"
           >
             <AppIcon name="close" class="w-4 h-4" />
           </button>
         </div>
-        <div class="bg-black aspect-video flex items-center justify-center">
+        <div class="compat-aspect-video bg-black flex items-center justify-center">
           <video
             :src="downloadUrl(previewRec.id)"
             controls
@@ -315,7 +324,7 @@
           <a
             :href="downloadUrl(previewRec.id)"
             :download="`recording_${previewRec.id}.${previewRec.format || 'mp4'}`"
-            class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md text-sm transition-colors inline-flex items-center gap-1.5"
+            class="ui-button-primary compat-flex-gap-1"
           >
             <AppIcon name="download" class="w-4 h-4" />
             <span>下载</span>
@@ -327,10 +336,10 @@
     <!-- 计划编辑对话框 -->
     <div
       v-if="showScheduleDialog"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      class="ui-modal-backdrop"
       @click.self="showScheduleDialog = false"
     >
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+      <div class="ui-modal max-w-md p-6">
         <h3 class="text-lg font-semibold text-slate-800 mb-4">
           {{ scheduleForm.id ? '编辑计划' : '新建计划' }}
         </h3>
@@ -341,7 +350,7 @@
             <input
               v-model="scheduleForm.name"
               type="text"
-              class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              class="ui-input"
               placeholder="白天录像"
             />
           </div>
@@ -350,7 +359,7 @@
             <label class="block text-sm font-medium text-slate-700 mb-1">摄像头</label>
             <select
               v-model="scheduleForm.camera_id"
-              class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              class="ui-select"
             >
               <option v-for="cam in cameras" :key="cam.id" :value="cam.id">
                 {{ cam.name }} ({{ cam.ip }})
@@ -364,7 +373,7 @@
               <input
                 v-model="scheduleForm.start_time"
                 type="time"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                class="ui-input"
               />
             </div>
             <div>
@@ -372,14 +381,14 @@
               <input
                 v-model="scheduleForm.end_time"
                 type="time"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                class="ui-input"
               />
             </div>
           </div>
 
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1.5">重复星期</label>
-            <div class="flex flex-wrap gap-1.5">
+            <div class="compat-flex-gap-1 flex-wrap">
               <button
                 v-for="(d, i) in weekdays"
                 :key="d.name"
@@ -398,7 +407,7 @@
               <label class="block text-sm font-medium text-slate-700 mb-1">格式</label>
               <select
                 v-model="scheduleForm.format"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                class="ui-select"
               >
                 <option value="mp4">MP4</option>
                 <option value="webm">WebM</option>
@@ -409,7 +418,7 @@
               <label class="block text-sm font-medium text-slate-700 mb-1">码率</label>
               <select
                 v-model.number="scheduleForm.bitrate"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                class="ui-select"
               >
                 <option :value="0">原画质（相机码率）</option>
                 <option :value="512">512kbps（小文件）</option>
@@ -426,10 +435,10 @@
           </div>
         </div>
 
-        <div class="flex justify-end gap-2 mt-5">
-          <button @click="showScheduleDialog = false" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-md">取消</button>
+        <div class="compat-flex-gap-2 justify-end mt-5">
+          <button @click="showScheduleDialog = false" class="ui-button-secondary">取消</button>
           <button @click="saveSchedule" :disabled="savingSchedule"
-            class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md text-sm disabled:opacity-50">
+            class="ui-button-primary disabled:opacity-50">
             {{ savingSchedule ? '保存中...' : '保存' }}
           </button>
         </div>

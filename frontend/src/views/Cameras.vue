@@ -1,22 +1,22 @@
 <template>
-  <div class="p-6">
+  <div>
     <!-- 页头 -->
-    <div class="flex items-center justify-between mb-6">
+    <div class="ui-page-header">
       <div>
-        <h1 class="text-2xl font-bold text-slate-800">摄像头管理</h1>
-        <p class="text-sm text-slate-500 mt-1">管理所有接入的监控摄像头</p>
+        <h1 class="ui-page-title">摄像头管理</h1>
+        <p class="ui-page-description">管理所有接入的监控摄像头</p>
       </div>
-      <div class="flex gap-2">
+      <div class="ui-page-header-actions compat-flex-gap-2">
         <button
           @click="handleScanLAN"
-          class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm font-medium transition-colors inline-flex items-center gap-1.5"
+          class="ui-button-secondary compat-flex-gap-1"
         >
           <AppIcon name="scan" class="w-4 h-4" />
           <span>扫描局域网</span>
         </button>
         <button
           @click="showAddDialog = true"
-          class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md text-sm font-medium transition-colors"
+          class="ui-button-primary"
         >
           + 添加摄像头
         </button>
@@ -32,7 +32,7 @@
       <p class="text-slate-500">还没有添加摄像头</p>
       <button
         @click="showAddDialog = true"
-        class="mt-4 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-slate-500 rounded-md text-sm"
+        class="ui-button-primary mt-4"
       >
         添加第一个摄像头
       </button>
@@ -43,7 +43,7 @@
       <div
         v-for="cam in cameras"
         :key="cam.id"
-        class="bg-white rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-shadow flex flex-col"
+        class="ui-card flex flex-col hover:shadow-md transition-shadow"
       >
         <div class="p-4 flex-1">
           <div class="flex items-start justify-between">
@@ -52,7 +52,7 @@
               <p class="text-xs text-slate-500 mt-0.5">{{ cam.ip }}:{{ cam.port }}</p>
             </div>
             <span
-              class="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
+              class="ui-status"
               :class="cam.status === 'online'
                 ? 'bg-emerald-50 text-emerald-700'
                 : 'bg-slate-100 text-slate-500'"
@@ -153,14 +153,14 @@
             </template>
 
             <!-- 错误信息展示 -->
-            <div v-if="cam.last_error" class="mt-1 px-2 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-600 flex items-start gap-1.5">
+            <div v-if="cam.last_error" class="ui-alert mt-2 text-[11px]">
               <AppIcon name="warning" class="w-3.5 h-3.5 mt-px flex-shrink-0" />
               <span>{{ cam.last_error }}</span>
             </div>
           </div>
         </div>
 
-        <div class="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2">
+        <div class="px-4 py-3 bg-slate-50 border-t border-slate-100 compat-flex-gap-2">
           <!-- RTSP: 同步时间/测试/网络配置 -->
           <template v-if="cam.access_protocol !== 'gb28181'">
             <button
@@ -213,10 +213,10 @@
     <!-- 添加/编辑对话框 -->
     <div
       v-if="showAddDialog || editingCamera"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      class="ui-modal-backdrop"
       @click.self="closeDialog"
     >
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+      <div class="ui-modal max-w-lg p-6 max-h-[90vh]">
         <h2 class="text-lg font-semibold text-slate-800 mb-4">
           {{ editingCamera ? '编辑摄像头' : '添加摄像头' }}
         </h2>
@@ -573,7 +573,7 @@
 
     <!-- 测试结果弹窗 -->
     <div v-if="testInfoModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="testInfoModal = null">
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6">
+      <div class="ui-modal max-w-sm p-6">
         <h3 class="text-lg font-semibold text-slate-800 mb-3">设备信息</h3>
         <div class="space-y-2 text-sm">
           <div v-if="testInfoModal.manufacturer"><span class="text-slate-400">厂商:</span> {{ testInfoModal.manufacturer }}</div>
@@ -594,8 +594,8 @@
     </div>
 
     <!-- 局域网扫描弹窗 -->
-    <div v-if="showScanDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="showScanDialog = false">
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[85vh] overflow-y-auto">
+    <div v-if="showScanDialog" class="ui-modal-backdrop" @click.self="showScanDialog = false">
+      <div class="ui-modal max-w-2xl p-6 max-h-[85vh]">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
             <AppIcon name="scan" class="w-5 h-5" />
@@ -699,8 +699,8 @@
     </div>
 
     <!-- 网络配置弹窗 -->
-    <div v-if="showNetworkConfigDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="showNetworkConfigDialog = false">
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+    <div v-if="showNetworkConfigDialog" class="ui-modal-backdrop" @click.self="showNetworkConfigDialog = false">
+      <div class="ui-modal max-w-md p-6">
         <h3 class="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
           <AppIcon name="globe" class="w-5 h-5" />
           <span>网络配置 — {{ networkConfigCamera?.name }}</span>
