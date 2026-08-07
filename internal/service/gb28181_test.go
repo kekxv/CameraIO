@@ -1,10 +1,15 @@
 package service
 
 import (
+	"context"
+	"encoding/base64"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
+	"time"
 
+	"CameraIO/internal/model"
 	"CameraIO/internal/pkg"
 
 	"gorm.io/driver/sqlite"
@@ -70,6 +75,210 @@ func TestParseSIPHeaderCaseInsensitive(t *testing.T) {
 	got := parseSIPHeader(msg, "content-type")
 	if got != "Application/MANSCDP+xml" {
 		t.Errorf("case-insensitive parse failed: %q", got)
+	}
+}
+
+func TestParseGBVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"2022", "REGISTER sip:server SIP/2.0\r\nX-GB-Ver: 3.0\r\n\r\n", "2022"},
+		{"2016", "REGISTER sip:server SIP/2.0\r\nX-GB-Ver: 2.0\r\n\r\n", "2016"},
+		{"2011", "REGISTER sip:server SIP/2.0\r\nX-GB-Ver: 1.1\r\n\r\n", "2011"},
+		{"missing header", "REGISTER sip:server SIP/2.0\r\n\r\n", ""},
+		{"unknown version", "REGISTER sip:server SIP/2.0\r\nX-GB-Ver: 4.0\r\n\r\n", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseGBVersion(tt.raw); got != tt.want {
+				t.Fatalf("parseGBVersion() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildImageSnapControl(t *testing.T) {
+	got := buildImageSnapControl("34020000001320000001", 42)
+	for _, want := range []string{
+		`<CmdType>DeviceControl</CmdType>`,
+		`<SN>42</SN>`,
+		`<DeviceID>34020000001320000001</DeviceID>`,
+		`<ImageCmd>Snap</ImageCmd>`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("snapshot control missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestCaptureSnapshotRejectsNon2022Device(t *testing.T) {
+	svc := testGB28181Service(t)
+	deviceID := "34020000001320000001"
+	camera := model.Camera{
+		Name:           "GB camera",
+		AccessProtocol: model.ProtocolGB28181,
+		DeviceID:       deviceID,
+		ChannelID:      deviceID,
+	}
+	if err := svc.db.Create(&camera).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc.devices = map[string]*DeviceSession{
+		deviceID: {DeviceID: deviceID, GBVersion: "2016"},
+	}
+
+	_, err := svc.CaptureSnapshot(context.Background(), camera.ID)
+	if err == nil || !strings.Contains(err.Error(), "2022") {
+		t.Fatalf("CaptureSnapshot() error = %v, want unsupported 2022 error", err)
+	}
+}
+
+func TestCameraServiceRoutesGB28181SnapshotToGBService(t *testing.T) {
+	gbSvc := testGB28181Service(t)
+	deviceID := "34020000001320000003"
+	camera := model.Camera{
+		Name:           "GB camera",
+		AccessProtocol: model.ProtocolGB28181,
+		DeviceID:       deviceID,
+		ChannelID:      deviceID,
+	}
+	if err := gbSvc.db.Create(&camera).Error; err != nil {
+		t.Fatal(err)
+	}
+	gbSvc.devices = map[string]*DeviceSession{
+		deviceID: {DeviceID: deviceID, GBVersion: "2016"},
+	}
+	cameraSvc := NewCameraService(gbSvc.db, nil)
+	cameraSvc.SetGB28181(gbSvc)
+
+	_, err := cameraSvc.CaptureSnapshot(context.Background(), camera.ID)
+	if err == nil || !strings.Contains(err.Error(), "2022") {
+		t.Fatalf("CaptureSnapshot() error = %v, want GB28181 version error", err)
+	}
+}
+
+func TestCaptureSnapshotRejectsUnavailableTCPTransport(t *testing.T) {
+	svc := testGB28181Service(t)
+	deviceID := "34020000001320000004"
+	camera := model.Camera{
+		Name:           "GB camera",
+		AccessProtocol: model.ProtocolGB28181,
+		DeviceID:       deviceID,
+		ChannelID:      deviceID,
+	}
+	if err := svc.db.Create(&camera).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc.devices = map[string]*DeviceSession{
+		deviceID: {DeviceID: deviceID, IP: "127.0.0.1", Port: 5060, Transport: "TCP", GBVersion: "2022"},
+	}
+
+	_, err := svc.CaptureSnapshot(context.Background(), camera.ID)
+	if err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Fatalf("CaptureSnapshot() error = %v, want SIP service unavailable error", err)
+	}
+}
+
+func TestCaptureSnapshotReceivesJPEGInSIPResponse(t *testing.T) {
+	svc := testGB28181Service(t)
+	deviceID := "34020000001320000001"
+	channelID := "34020000001320000002"
+	camera := model.Camera{
+		Name:           "GB camera",
+		AccessProtocol: model.ProtocolGB28181,
+		DeviceID:       deviceID,
+		ChannelID:      channelID,
+	}
+	if err := svc.db.Create(&camera).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	deviceConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deviceConn.Close()
+	serverConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverConn.Close()
+	svc.udpConn = serverConn
+	svc.devices = map[string]*DeviceSession{
+		deviceID: {
+			DeviceID:  deviceID,
+			IP:        "127.0.0.1",
+			Port:      deviceConn.LocalAddr().(*net.UDPAddr).Port,
+			Transport: "UDP",
+			Domain:    "3402000000",
+			GBVersion: "2022",
+		},
+	}
+
+	result := make(chan struct {
+		jpeg []byte
+		err  error
+	}, 1)
+	go func() {
+		jpeg, err := svc.CaptureSnapshot(context.Background(), camera.ID)
+		result <- struct {
+			jpeg []byte
+			err  error
+		}{jpeg, err}
+	}()
+
+	buf := make([]byte, 4096)
+	if err := deviceConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	n, _, err := deviceConn.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatalf("read snapshot command: %v", err)
+	}
+	request := string(buf[:n])
+	if !strings.Contains(request, "<ImageCmd>Snap</ImageCmd>") {
+		t.Fatalf("snapshot command missing ImageCmd: %s", request)
+	}
+	callID := parseSIPHeader(request, "Call-ID")
+	jpeg := []byte{0xff, 0xd8, 0x01, 0x02, 0xff, 0xd9}
+	response := "SIP/2.0 200 OK\r\nCall-ID: " + callID + "\r\nContent-Type: image/jpeg\r\n\r\n" + string(jpeg)
+	svc.handleSIPMessage(response, deviceConn.LocalAddr(), "UDP")
+
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatalf("CaptureSnapshot() error = %v", got.err)
+		}
+		if string(got.jpeg) != string(jpeg) {
+			t.Fatalf("CaptureSnapshot() = %x, want %x", got.jpeg, jpeg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CaptureSnapshot() did not return after JPEG response")
+	}
+}
+
+func TestSnapshotResponseUsesSNAndDecodesImageData(t *testing.T) {
+	svc := testGB28181Service(t)
+	resultCh := make(chan snapshotResult, 1)
+	svc.registerSnapshotWaiter("outbound-call", 42, resultCh)
+	jpeg := []byte{0xff, 0xd8, 0x11, 0x22, 0xff, 0xd9}
+	body := `<?xml version="1.0"?><Response><CmdType>DeviceControl</CmdType><SN>42</SN><ImageData>` +
+		base64.StdEncoding.EncodeToString(jpeg) + `</ImageData></Response>`
+	svc.completeSnapshotFromSIP("MESSAGE sip:server SIP/2.0\r\nCall-ID: device-message\r\nContent-Type: Application/MANSCDP+xml\r\n\r\n" + body)
+
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("snapshot result error = %v", result.err)
+		}
+		if string(result.jpeg) != string(jpeg) {
+			t.Fatalf("snapshot result = %x, want %x", result.jpeg, jpeg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("snapshot response with matching SN was not delivered")
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 type CameraService struct {
 	db     *gorm.DB
 	onvif  *ONVIFService
+	gb28181 *GB28181Service
 	cancel context.CancelFunc
 	ctx    context.Context
 }
@@ -40,6 +41,11 @@ const (
 func NewCameraService(db *gorm.DB, onvif *ONVIFService) *CameraService {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &CameraService{db: db, onvif: onvif, ctx: ctx, cancel: cancel}
+}
+
+// SetGB28181 injects the SIP service used for GB/T 28181-2022 snapshots.
+func (s *CameraService) SetGB28181(g *GB28181Service) {
+	s.gb28181 = g
 }
 
 // Shutdown 优雅关闭后台 goroutine。
@@ -239,6 +245,12 @@ func (s *CameraService) CaptureSnapshot(ctx context.Context, cameraID uint) ([]b
 	camera, err := s.Get(cameraID)
 	if err != nil {
 		return nil, err
+	}
+	if camera.AccessProtocol == model.ProtocolGB28181 {
+		if s.gb28181 == nil {
+			return nil, errors.New("GB28181 snapshot service is not available")
+		}
+		return s.gb28181.CaptureSnapshot(ctx, cameraID)
 	}
 	if camera.AccessProtocol != "" && camera.AccessProtocol != model.ProtocolRTSP {
 		return nil, fmt.Errorf("native snapshot is only supported for RTSP cameras")

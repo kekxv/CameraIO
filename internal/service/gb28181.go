@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -35,6 +37,11 @@ type GB28181Service struct {
 	rtpRecvs map[int]*RTPReceiver      // port → RTP 接收器
 	tcpConns map[string]net.Conn       // 远端地址 → TCP 连接（用于发送 SIP 响应）
 
+	snapshotMu      sync.Mutex
+	snapshotWaiters map[string]chan snapshotResult // SIP Call-ID → waiting capture
+	snapshotBySN    map[string]string              // DeviceControl SN → SIP Call-ID
+	snapshotSerial  atomic.Int64
+
 	udpConn *net.UDPConn
 	tcpLn   net.Listener
 	ctx     context.Context
@@ -48,9 +55,15 @@ type DeviceSession struct {
 	Port         int    // 设备 SIP 端口
 	Transport    string // UDP / TCP
 	Domain       string // 设备注册时使用的 SIP 域
+	GBVersion    string // "2022" / "2016" / "2011"，由 REGISTER 的 X-GB-Ver 确认
 	RegisteredAt time.Time
 	KeepaliveAt  time.Time
 	Channels     []string // 通道 ID 列表
+}
+
+type snapshotResult struct {
+	jpeg []byte
+	err  error
 }
 
 func NewGB28181Service(cfg *pkg.Config, db *gorm.DB, events *EventBus, streams *StreamService) *GB28181Service {
@@ -62,6 +75,8 @@ func NewGB28181Service(cfg *pkg.Config, db *gorm.DB, events *EventBus, streams *
 		devices:  make(map[string]*DeviceSession),
 		rtpRecvs: make(map[int]*RTPReceiver),
 		tcpConns: make(map[string]net.Conn),
+		snapshotWaiters: make(map[string]chan snapshotResult),
+		snapshotBySN:    make(map[string]string),
 	}
 	s.rtpPorts.Store(int32(cfg.RTPPortMin))
 	return s
@@ -191,6 +206,7 @@ func (s *GB28181Service) handleSIPMessage(raw string, remoteAddr net.Addr, trans
 		if strings.HasPrefix(method, "SIP/2.0") {
 			statusLine := strings.SplitN(raw, "\r\n", 2)[0]
 			log.Printf("[GB28181] SIP response from %s: %s", remoteAddr, statusLine)
+			s.completeSnapshotFromSIP(raw)
 			// INVITE 的 200 OK 需要发送 ACK 完成会话，设备才会推流
 			if strings.Contains(statusLine, "200") {
 				cseqHdr := parseSIPHeader(raw, "CSeq")
@@ -273,6 +289,7 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 		Port:         addr.Port,
 		Transport:    transport,
 		Domain:       domain,
+		GBVersion:    parseGBVersion(raw),
 		RegisteredAt: time.Now(),
 		KeepaliveAt:  time.Now(),
 	}
@@ -300,7 +317,7 @@ func (s *GB28181Service) handleRegister(raw string, remoteAddr net.Addr, transpo
 
 	// 发送 200 OK
 	s.sendRegisterOK(raw, remoteAddr, transport, callID, cseq, expires)
-	log.Printf("[GB28181] Device registered: %s from %s", deviceID, remoteAddr)
+	log.Printf("[GB28181] Device registered: %s from %s (version=%s)", deviceID, remoteAddr, parseGBVersion(raw))
 
 	// 注册成功后查询设备的 Catalog，获取真实通道列表
 	go s.queryDeviceCatalog(deviceID)
@@ -480,6 +497,9 @@ func (s *GB28181Service) handleMessage(raw string, remoteAddr net.Addr, transpor
 		s.sendSIPResponse(raw, remoteAddr, transport, 200, "OK")
 		return
 	}
+	// GB/T 28181-2022 抓拍回传可由设备主动发送 MESSAGE；先尝试把
+	// JPEG 回传交给对应的抓拍请求，未匹配时再按普通国标消息处理。
+	s.completeSnapshotFromSIP(raw)
 
 	cmdType := extractXMLValue(body, "CmdType")
 	switch cmdType {
@@ -505,6 +525,163 @@ func (s *GB28181Service) handleMessage(raw string, remoteAddr net.Addr, transpor
 	default:
 		s.sendSIPResponse(raw, remoteAddr, transport, 200, "OK")
 	}
+}
+
+const gbSnapshotTimeout = 5 * time.Second
+
+// CaptureSnapshot sends GB/T 28181-2022's ImageCmd=Snap DeviceControl and
+// waits for a JPEG carried by the matching SIP response or MESSAGE. It does
+// not start a preview stream or invoke FFmpeg.
+func (s *GB28181Service) CaptureSnapshot(ctx context.Context, cameraID uint) ([]byte, error) {
+	var camera model.Camera
+	if err := s.db.First(&camera, cameraID).Error; err != nil {
+		return nil, fmt.Errorf("camera %d not found: %w", cameraID, err)
+	}
+	if camera.AccessProtocol != model.ProtocolGB28181 {
+		return nil, fmt.Errorf("camera %d is not a GB28181 camera", cameraID)
+	}
+
+	s.mu.RLock()
+	dev, ok := s.devices[camera.DeviceID]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("GB28181 device %s is not registered", camera.DeviceID)
+	}
+	if dev.GBVersion != "2022" {
+		return nil, fmt.Errorf("GB28181 device %s does not advertise GB/T 28181-2022 snapshot support", camera.DeviceID)
+	}
+	if strings.EqualFold(dev.Transport, "TCP") {
+		key := net.JoinHostPort(dev.IP, fmt.Sprintf("%d", dev.Port))
+		s.mu.RLock()
+		_, connected := s.tcpConns[key]
+		s.mu.RUnlock()
+		if !connected {
+			return nil, errors.New("GB28181 SIP service is not running for this TCP device")
+		}
+	} else if s.udpConn == nil {
+		return nil, errors.New("GB28181 SIP service is not running")
+	}
+
+	channelID := camera.ChannelID
+	if channelID == "" {
+		channelID = camera.DeviceID
+	}
+	serial := s.snapshotSerial.Add(1)
+	callID := generateCallID()
+	resultCh := make(chan snapshotResult, 1)
+	s.registerSnapshotWaiter(callID, serial, resultCh)
+	defer s.removeSnapshotWaiter(callID, serial)
+
+	message := s.buildImageSnapMessage(channelID, dev, callID, serial)
+	addr := &net.UDPAddr{IP: net.ParseIP(dev.IP), Port: dev.Port}
+	log.Printf("[GB28181] sending ImageCmd=Snap to device %s, channel %s", camera.DeviceID, channelID)
+	s.sendSIPRaw(message, addr, dev.Transport)
+
+	waitCtx, cancel := context.WithTimeout(ctx, gbSnapshotTimeout)
+	defer cancel()
+	select {
+	case result := <-resultCh:
+		return result.jpeg, result.err
+	case <-waitCtx.Done():
+		return nil, fmt.Errorf("GB28181 snapshot timed out waiting for device %s", camera.DeviceID)
+	}
+}
+
+func (s *GB28181Service) registerSnapshotWaiter(callID string, serial int64, resultCh chan snapshotResult) {
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	if s.snapshotWaiters == nil {
+		s.snapshotWaiters = make(map[string]chan snapshotResult)
+		s.snapshotBySN = make(map[string]string)
+	}
+	s.snapshotWaiters[callID] = resultCh
+	s.snapshotBySN[fmt.Sprintf("%d", serial)] = callID
+}
+
+func (s *GB28181Service) removeSnapshotWaiter(callID string, serial int64) {
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	delete(s.snapshotWaiters, callID)
+	delete(s.snapshotBySN, fmt.Sprintf("%d", serial))
+}
+
+func (s *GB28181Service) completeSnapshotFromSIP(raw string) {
+	body := extractSIPBody(raw)
+	jpeg, ok := snapshotJPEGFromSIPBody(body)
+	if !ok {
+		return
+	}
+
+	callID := parseSIPHeader(raw, "Call-ID")
+	s.snapshotMu.Lock()
+	resultCh, found := s.snapshotWaiters[callID]
+	if !found {
+		callID = s.snapshotBySN[extractXMLValue(body, "SN")]
+		resultCh, found = s.snapshotWaiters[callID]
+	}
+	if found {
+		delete(s.snapshotWaiters, callID)
+		for sn, pendingCallID := range s.snapshotBySN {
+			if pendingCallID == callID {
+				delete(s.snapshotBySN, sn)
+			}
+		}
+	}
+	s.snapshotMu.Unlock()
+	if found {
+		resultCh <- snapshotResult{jpeg: jpeg}
+	}
+}
+
+func snapshotJPEGFromSIPBody(body string) ([]byte, bool) {
+	data := []byte(body)
+	if isJPEG(data) {
+		return data, true
+	}
+	// GB/T 28181-2022 设备在实践中常把抓图放在 XML 内；兼容常见的
+	// Base64 字段名称，同时仍要求 JPEG 标记，避免把错误文本当作图片。
+	for _, tag := range []string{"ImageData", "PictureData", "ImageBase64"} {
+		encoded := extractXMLValue(body, tag)
+		if encoded == "" {
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(encoded), ""))
+		if err == nil && isJPEG(decoded) {
+			return decoded, true
+		}
+	}
+	return nil, false
+}
+
+func (s *GB28181Service) buildImageSnapMessage(channelID string, dev *DeviceSession, callID string, serial int64) string {
+	domain := dev.Domain
+	if domain == "" {
+		domain = s.cfg.SIPRealm
+	}
+	transport := dev.Transport
+	if transport == "" {
+		transport = "UDP"
+	}
+	localIP := s.getLocalIPFor(dev.IP)
+	body := buildImageSnapControl(channelID, serial)
+	return fmt.Sprintf("MESSAGE sip:%s@%s SIP/2.0\r\n"+
+		"Via: SIP/2.0/%s %s:5060;rport;branch=z9hG4bK%s\r\n"+
+		"From: <sip:%s@%s>;tag=CameraIO-snapshot\r\n"+
+		"To: <sip:%s@%s>\r\n"+
+		"Call-ID: %s\r\n"+
+		"CSeq: 1 MESSAGE\r\n"+
+		"Max-Forwards: 70\r\n"+
+		"Content-Type: Application/MANSCDP+xml\r\n"+
+		"Content-Length: %d\r\n"+
+		"\r\n"+
+		"%s",
+		channelID, domain,
+		transport, localIP, generateBranch(),
+		s.cfg.SIPServerID, domain,
+		channelID, domain,
+		callID,
+		len(body),
+		body)
 }
 
 // logDeviceChannels 解析设备返回的 Catalog 响应，记录可用通道。
@@ -848,6 +1025,19 @@ func (s *GB28181Service) queryDeviceCatalog(deviceID string) {
 	log.Printf("[GB28181] sent Catalog query to device %s", deviceID)
 }
 
+// buildImageSnapControl creates the GB/T 28181-2022 DeviceControl payload for
+// a single image capture. This command is sent only to a registered device
+// that advertised X-GB-Ver: 3.0.
+func buildImageSnapControl(channelID string, serial int64) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="GB2312"?>
+<Control>
+<CmdType>DeviceControl</CmdType>
+<SN>%d</SN>
+<DeviceID>%s</DeviceID>
+<ImageCmd>Snap</ImageCmd>
+</Control>`, serial, xmlEscape(channelID))
+}
+
 func (s *GB28181Service) buildInviteSDP(rtpPort int, deviceIP string) string {
 	localIP := s.getLocalIPFor(deviceIP)
 	// 生成 10 位 SSRC（海康要求 SDP 包含 y= 字段才推流）
@@ -993,8 +1183,10 @@ func (s *GB28181Service) sendSIPRaw(msg string, remoteAddr net.Addr, transport s
 	}
 
 	// UDP 发送
-	if addr, ok := remoteAddr.(*net.UDPAddr); ok {
+	if addr, ok := remoteAddr.(*net.UDPAddr); ok && s.udpConn != nil {
 		s.udpConn.WriteToUDP([]byte(msg), addr)
+	} else if addr != nil {
+		log.Printf("[GB28181] UDP SIP service is not running; cannot send to %s", addr)
 	}
 }
 
@@ -1026,6 +1218,22 @@ func parseSIPHeader(raw, name string) string {
 		}
 	}
 	return ""
+}
+
+// parseGBVersion maps GB/T 28181's X-GB-Ver extension header to the
+// corresponding standard edition. Unknown and absent values are deliberately
+// treated as unsupported rather than assuming 2022-only features are present.
+func parseGBVersion(raw string) string {
+	switch strings.TrimSpace(parseSIPHeader(raw, "X-GB-Ver")) {
+	case "3.0":
+		return "2022"
+	case "2.0":
+		return "2016"
+	case "1.0", "1.1":
+		return "2011"
+	default:
+		return ""
+	}
 }
 
 func extractSIPUser(sipURI string) string {
