@@ -54,7 +54,6 @@ CameraIO 是一款高吞吐、极低延迟、API 优先的轻量级软件 NVR，
 
 - Go 1.21+
 - FFmpeg（用于 RTSP 拉流和录像）
-- CGO 支持（SQLite 需要）
 
 ### 编译
 
@@ -64,8 +63,8 @@ CameraIO 是一款高吞吐、极低延迟、API 优先的轻量级软件 NVR，
 # 1. 构建前端
 cd frontend && npm install && npm run build && cd ..
 
-# 2. 编译后端（内嵌前端产物，生成自包含单文件）
-CGO_ENABLED=1 go build -o cameraio ./cmd/server/
+# 2. 编译后端（内嵌前端产物，生成自包含单文件；无需 GCC/CGO）
+CGO_ENABLED=0 go build -o cameraio ./cmd/server/
 
 # 运行（单文件即可，任意工作目录下均能访问 WebUI）
 ./cameraio
@@ -213,14 +212,14 @@ GET /ws/v1/system?client_id=xxx
 ### 运行测试
 
 ```bash
-# 全量测试
-CGO_ENABLED=1 go test ./...
+# 全量测试（纯 Go，无需 CGO）
+CGO_ENABLED=0 go test ./...
 
 # 带覆盖率
-CGO_ENABLED=1 go test ./... -cover
+CGO_ENABLED=0 go test ./... -cover
 
 # 指定包
-CGO_ENABLED=1 go test ./internal/service/... -v
+CGO_ENABLED=0 go test ./internal/service/... -v
 ```
 
 ### 技术栈
@@ -229,7 +228,7 @@ CGO_ENABLED=1 go test ./internal/service/... -v
 |---|---|
 | 后端语言 | Go 1.21+ |
 | HTTP 框架 | Gin |
-| 数据库 | SQLite + GORM |
+| 数据库 | SQLite + GORM（纯 Go 驱动） |
 | 鉴权 | JWT (golang-jwt) |
 
 | WebSocket | gorilla/websocket |
@@ -240,7 +239,7 @@ CGO_ENABLED=1 go test ./internal/service/... -v
 ### 编译为单文件
 
 ```bash
-CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o cameraio ./cmd/server/main.go
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cameraio ./cmd/server/
 ```
 
 将 `cameraio` 二进制文件复制到目标服务器即可运行，无需额外依赖（FFmpeg 需系统预装）。

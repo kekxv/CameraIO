@@ -8,6 +8,11 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# The project uses the pure-Go SQLite driver. Keep release artifacts portable
+# and ensure a compiler is never required by the build runners.
+env:
+  CGO_ENABLED: "0"
+
 jobs:
   # ===========================================
   # 测试门禁：测试通过后才会执行构建
@@ -42,8 +47,6 @@ jobs:
         run: go vet ./...
 
       - name: Go test
-        env:
-          CGO_ENABLED: 1
         run: go test ./... -count=1
 
   # ===========================================
@@ -79,18 +82,10 @@ jobs:
           go-version: '1.20'
           cache: true
 
-      - name: Install cross-compiler (arm64)
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
       - name: Build backend
         env:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
-          CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
-          CGO_ENABLED: 1
         run: |
           go build -ldflags="-s -w" -o cameraio-linux-${{ matrix.arch }} ./cmd/server/
 
@@ -98,8 +93,6 @@ jobs:
         env:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
-          CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
-          CGO_ENABLED: 1
         run: |
           go build -ldflags="-s -w" -o localcam-linux-${{ matrix.arch }} ./cmd/localcam/
 
@@ -151,7 +144,6 @@ jobs:
         env:
           GOOS: windows
           GOARCH: amd64
-          CGO_ENABLED: 1
           # 控制台模式：双击 exe 可看到运行日志（不隐藏控制台窗口）
           LDFLAGS: -s -w
         run: |

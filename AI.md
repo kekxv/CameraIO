@@ -241,7 +241,7 @@ CREATE TABLE recordings (
 得益于 Go 的特性，系统可静态编译为单个可执行二进制文件：
 ```bash
 # 编译后端
-CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o cameraio ./cmd/main.go
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cameraio ./cmd/server/
 
 # 静态资源嵌入 (Go Embed)
 # 可将前端产物 (dist) 直接嵌入到 Go 二进制中，实现真正单文件运行。

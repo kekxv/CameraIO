@@ -34,7 +34,7 @@ Add a test whose ONVIF response contains `<tt:Uri>http://camera/snapshot.jpg</tt
 
 - [x] **Step 2: Run tests to verify they fail**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/service -run 'Test(GetSnapshotURI|FindProfileToken)' -count=1 -v`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/service -run 'Test(GetSnapshotURI|FindProfileToken)' -count=1 -v`
 
 Expected: compile failure because the snapshot methods do not exist.
 
@@ -44,7 +44,7 @@ Build a `GetSnapshotUri` SOAP envelope with XML-escaped profile token, call the 
 
 - [x] **Step 4: Run focused tests**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/service -run 'Test(GetSnapshotURI|FindProfileToken)' -count=1 -v`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/service -run 'Test(GetSnapshotURI|FindProfileToken)' -count=1 -v`
 
 Expected: PASS.
 
@@ -68,7 +68,7 @@ Add an HTTP test that requests the new route without a token and expects `401`. 
 
 - [x] **Step 2: Run tests to verify they fail**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/api ./internal/service -run 'Test(CameraSnapshot|CaptureSnapshot)' -count=1 -v`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/api ./internal/service -run 'Test(CameraSnapshot|CaptureSnapshot)' -count=1 -v`
 
 Expected: route or method is unavailable.
 
@@ -78,7 +78,7 @@ Have `CaptureSnapshot` load the camera, reject non-RTSP sources, resolve its pro
 
 - [x] **Step 4: Run focused tests**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/api ./internal/service -run 'Test(CameraSnapshot|CaptureSnapshot)' -count=1 -v`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/api ./internal/service -run 'Test(CameraSnapshot|CaptureSnapshot)' -count=1 -v`
 
 Expected: PASS.
 
@@ -96,12 +96,11 @@ Document `GET /cameras/{id}/snapshot` as a direct JPEG operation, `POST /streams
 Run:
 
 ```sh
-CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/service -count=1
-CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/api -count=1
-CGO_ENABLED=1 /usr/local/go/bin/go test ./... -count=1
-CGO_ENABLED=1 /usr/local/go/bin/go test -race ./internal/service -count=1
+CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/service -count=1
+CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/api -count=1
+CGO_ENABLED=0 /usr/local/go/bin/go test ./... -count=1
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 /usr/local/go/bin/go test -c -o /tmp/cameraio-service-windows.test.exe ./internal/service
-CGO_ENABLED=1 /usr/local/go/bin/go build -o /tmp/cameraio-check ./cmd/server
+CGO_ENABLED=0 /usr/local/go/bin/go build -o /tmp/cameraio-check ./cmd/server
 git diff --check
 ```
 

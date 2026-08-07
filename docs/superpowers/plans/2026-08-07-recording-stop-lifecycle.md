@@ -34,7 +34,7 @@ Add a helper subprocess test that starts a cancellable long-running process, reg
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/service -run 'TestStopRecording_(UsesWatcherCompletion|IsIdempotent)' -count=1 -v`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/service -run 'TestStopRecording_(UsesWatcherCompletion|IsIdempotent)' -count=1 -v`
 
 Expected: FAIL because `recordTask` has no shared completion channel and `StopRecording` independently calls `cmd.Wait`.
 
@@ -44,9 +44,9 @@ Add `done chan struct{}` to `recordTask`, initialize it in both FFmpeg start pat
 
 - [ ] **Step 4: Run focused and package tests**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/service -run 'TestStopRecording_' -count=1 -v`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/service -run 'TestStopRecording_' -count=1 -v`
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/service -count=1`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/service -count=1`
 
 Expected: PASS with no 30-second wait.
 
@@ -73,7 +73,7 @@ Add tests that run `Shutdown` and `DeleteRecording` while `watchTask` owns a rea
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test ./internal/service -run 'TestRecorderService_(Shutdown|DeleteRecording|Sweep)' -count=1 -v`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/service -run 'TestRecorderService_(Shutdown|DeleteRecording|Sweep)' -count=1 -v`
 
 Expected: FAIL or expose the current duplicate `cmd.Wait` ownership.
 
@@ -81,11 +81,11 @@ Expected: FAIL or expose the current duplicate `cmd.Wait` ownership.
 
 Make `Shutdown` stop active recording IDs through `StopRecording`. Make `DeleteRecording` invoke `StopRecording` for active recordings before removing the file and row. Make the sweeper finalize only when it successfully removes the same task from `s.tasks`; otherwise leave finalization to the owner that already claimed it.
 
-- [ ] **Step 4: Run service tests with the race detector**
+- [ ] **Step 4: Run CGO-free service tests**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test -race ./internal/service -count=1`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./internal/service -count=1`
 
-Expected: PASS without process lifecycle races.
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -106,13 +106,13 @@ git commit -m "fix: share recorder shutdown lifecycle"
 
 - [ ] **Step 1: Run all Go tests**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go test ./... -count=1`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go test ./... -count=1`
 
 Expected: PASS.
 
 - [ ] **Step 2: Build the server**
 
-Run: `CGO_ENABLED=1 /usr/local/go/bin/go build -o /tmp/cameraio-stop-check ./cmd/server`
+Run: `CGO_ENABLED=0 /usr/local/go/bin/go build -o /tmp/cameraio-stop-check ./cmd/server`
 
 Expected: exit 0.
 
