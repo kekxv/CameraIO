@@ -17,7 +17,7 @@ import (
 	"CameraIO/internal/pkg"
 	"CameraIO/internal/service"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
