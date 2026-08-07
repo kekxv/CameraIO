@@ -28,6 +28,7 @@ func (h *Handler) SetupRouter() *gin.Engine {
 		protected.GET("/cameras", h.ListCameras)
 		protected.POST("/cameras", h.CreateCamera)
 		protected.GET("/cameras/:id", h.GetCamera)
+		protected.GET("/cameras/:id/snapshot", h.CaptureCameraSnapshot)
 		protected.PUT("/cameras/:id", h.UpdateCamera)
 		protected.DELETE("/cameras/:id", h.DeleteCamera)
 		protected.POST("/cameras/:id/sync-time", h.SyncCameraTime)

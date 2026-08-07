@@ -2,10 +2,14 @@ package api
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +20,21 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func digestTestHash(value string) string {
+	sum := md5.Sum([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func digestTestParameter(authorization, name string) string {
+	for _, part := range strings.Split(strings.TrimPrefix(authorization, "Digest "), ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if ok && key == name {
+			return strings.Trim(value, `"`)
+		}
+	}
+	return ""
+}
 
 // setupTestHandler 创建测试用的 Handler（内存 SQLite）。
 func setupTestHandler(t *testing.T) *Handler {
@@ -140,6 +159,175 @@ func TestUnauthorizedAccess(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestCameraSnapshotRequiresAuthentication(t *testing.T) {
+	h := setupTestHandler(t)
+	router := h.SetupRouter()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cameras/1/snapshot", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCameraSnapshotReturnsNotFoundForMissingCamera(t *testing.T) {
+	h := setupTestHandler(t)
+	token := createTestUser(t, h)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cameras/999/snapshot", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.SetupRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCameraSnapshotReturnsNativeJPEGWithoutStartingStream(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/onvif/media_service":
+			requestBody, _ := io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/soap+xml")
+			if strings.Contains(string(requestBody), "GetProfiles") {
+				_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <SOAP-ENV:Body><trt:GetProfilesResponse><trt:Profiles token="profile-1"><tt:Name>MediaProfile_Channel1_MainStream</tt:Name></trt:Profiles></trt:GetProfilesResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`))
+				return
+			}
+			if strings.Contains(string(requestBody), "GetSnapshotUri") {
+				_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <SOAP-ENV:Body><trt:GetSnapshotUriResponse><trt:MediaUri><tt:Uri>` + server.URL + `/snapshot</tt:Uri></trt:MediaUri></trt:GetSnapshotUriResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`))
+				return
+			}
+			t.Fatalf("unexpected ONVIF request: %s", requestBody)
+		case "/snapshot":
+			user, pass, ok := r.BasicAuth()
+			if !ok || user != "admin" || pass != "pass" {
+				w.Header().Set("WWW-Authenticate", `Basic realm="camera"`)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte{0xff, 0xd8, 0xff, 0xd9})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	h, db := setupTestHandlerWithDB(t)
+	camera := model.Camera{
+		Name:           "snapshot camera",
+		IP:             strings.TrimPrefix(server.URL, "http://"),
+		Port:           554,
+		RTSPUrl:        "rtsp://example.invalid/live",
+		Username:       "admin",
+		Password:       "pass",
+		AccessProtocol: model.ProtocolRTSP,
+		DeviceType:     model.DeviceTypeIPC,
+	}
+	if err := db.Create(&camera).Error; err != nil {
+		t.Fatalf("create camera: %v", err)
+	}
+
+	token := createTestUser(t, h)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cameras/"+uintToStr(camera.ID)+"/snapshot", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.SetupRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if contentType := w.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "image/jpeg") {
+		t.Fatalf("Content-Type = %q, want image/jpeg", contentType)
+	}
+	if got, want := w.Body.Bytes(), []byte{0xff, 0xd8, 0xff, 0xd9}; !bytes.Equal(got, want) {
+		t.Fatalf("snapshot = %x, want %x", got, want)
+	}
+	if stream := h.streamSvc.GetStream(camera.ID); stream != nil {
+		t.Fatal("snapshot must not start an RTSP stream")
+	}
+}
+
+func TestCameraSnapshotRetriesWithDigestAuthentication(t *testing.T) {
+	var server *httptest.Server
+	snapshotRequests := 0
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/onvif/media_service":
+			requestBody, _ := io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/soap+xml")
+			if strings.Contains(string(requestBody), "GetProfiles") {
+				_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <SOAP-ENV:Body><trt:GetProfilesResponse><trt:Profiles token="profile-1"><tt:Name>MediaProfile_Channel1_MainStream</tt:Name></trt:Profiles></trt:GetProfilesResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`))
+				return
+			}
+			_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <SOAP-ENV:Body><trt:GetSnapshotUriResponse><trt:MediaUri><tt:Uri>` + server.URL + `/snapshot</tt:Uri></trt:MediaUri></trt:GetSnapshotUriResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`))
+		case "/snapshot":
+			snapshotRequests++
+			if snapshotRequests == 1 {
+				w.Header().Set("WWW-Authenticate", `Digest realm="camera", nonce="nonce-1", qop="auth", algorithm=MD5`)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			authorization := r.Header.Get("Authorization")
+			if !strings.HasPrefix(authorization, `Digest username="admin"`) {
+				t.Fatalf("authorization = %q, want Digest authentication", authorization)
+			}
+			cnonce := digestTestParameter(authorization, "cnonce")
+			response := digestTestParameter(authorization, "response")
+			expected := digestTestHash(digestTestHash("admin:camera:pass") + ":nonce-1:00000001:" + cnonce + ":auth:" + digestTestHash("GET:/snapshot"))
+			if response != expected {
+				t.Fatalf("Digest response = %q, want %q", response, expected)
+			}
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte{0xff, 0xd8, 0xff, 0xd9})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	h, db := setupTestHandlerWithDB(t)
+	camera := model.Camera{
+		Name:           "digest snapshot camera",
+		IP:             strings.TrimPrefix(server.URL, "http://"),
+		RTSPUrl:        "rtsp://example.invalid/live",
+		Username:       "admin",
+		Password:       "pass",
+		AccessProtocol: model.ProtocolRTSP,
+	}
+	if err := db.Create(&camera).Error; err != nil {
+		t.Fatalf("create camera: %v", err)
+	}
+
+	token := createTestUser(t, h)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cameras/"+uintToStr(camera.ID)+"/snapshot", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.SetupRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if snapshotRequests != 2 {
+		t.Fatalf("snapshot requests = %d, want 2", snapshotRequests)
 	}
 }
 

@@ -2,11 +2,17 @@ package service
 
 import (
 	"context"
+	"crypto/md5"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +29,13 @@ type CameraService struct {
 	cancel context.CancelFunc
 	ctx    context.Context
 }
+
+var digestAuthParamRe = regexp.MustCompile(`([A-Za-z]+)=(?:"([^"]*)"|([^,\s]+))`)
+
+const (
+	snapshotTimeout  = 5 * time.Second
+	maxSnapshotBytes = 20 << 20
+)
 
 func NewCameraService(db *gorm.DB, onvif *ONVIFService) *CameraService {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -218,6 +231,148 @@ func (s *CameraService) List() ([]model.Camera, error) {
 		return nil, err
 	}
 	return cameras, nil
+}
+
+// CaptureSnapshot 获取设备原生 JPEG 快照。
+// 该路径仅调用 ONVIF Media 和设备 HTTP 快照地址，不启动 RTSP、FFmpeg 或 MJPEG 预览。
+func (s *CameraService) CaptureSnapshot(ctx context.Context, cameraID uint) ([]byte, error) {
+	camera, err := s.Get(cameraID)
+	if err != nil {
+		return nil, err
+	}
+	if camera.AccessProtocol != "" && camera.AccessProtocol != model.ProtocolRTSP {
+		return nil, fmt.Errorf("native snapshot is only supported for RTSP cameras")
+	}
+	if camera.IP == "" {
+		return nil, fmt.Errorf("camera IP is required for native snapshot")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	defer cancel()
+	profileToken, err := s.onvif.FindProfileToken(ctx, camera.IP, camera.Username, camera.Password, camera.NVRChannel)
+	if err != nil {
+		return nil, fmt.Errorf("resolve snapshot profile: %w", err)
+	}
+	snapshotURI, err := s.onvif.GetSnapshotURI(ctx, camera.IP, camera.Username, camera.Password, profileToken)
+	if err != nil {
+		return nil, fmt.Errorf("resolve snapshot URI: %w", err)
+	}
+
+	resp, err := fetchSnapshot(ctx, snapshotURI, camera.Username, camera.Password)
+	if err != nil {
+		return nil, fmt.Errorf("request camera snapshot failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("camera snapshot returned %s", resp.Status)
+	}
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	if !strings.HasPrefix(contentType, "image/jpeg") && !strings.HasPrefix(contentType, "image/jpg") {
+		return nil, fmt.Errorf("camera snapshot returned unexpected content type %q", contentType)
+	}
+	jpeg, err := io.ReadAll(io.LimitReader(resp.Body, maxSnapshotBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read camera snapshot: %w", err)
+	}
+	if len(jpeg) == 0 || len(jpeg) > maxSnapshotBytes {
+		return nil, fmt.Errorf("camera snapshot has invalid size")
+	}
+	return jpeg, nil
+}
+
+func fetchSnapshot(ctx context.Context, snapshotURI, username, password string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, snapshotURI, nil)
+	if err != nil {
+		return nil, fmt.Errorf("invalid snapshot URI")
+	}
+	if username != "" {
+		req.SetBasicAuth(username, password)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized || username == "" {
+		return resp, err
+	}
+
+	challenge := resp.Header.Get("WWW-Authenticate")
+	resp.Body.Close()
+	authorization, ok := buildDigestAuthorization(challenge, username, password, req.Method, req.URL.RequestURI())
+	if !ok {
+		return nil, fmt.Errorf("camera snapshot authentication failed")
+	}
+	retry, err := http.NewRequestWithContext(ctx, req.Method, snapshotURI, nil)
+	if err != nil {
+		return nil, fmt.Errorf("invalid snapshot URI")
+	}
+	retry.Header.Set("Authorization", authorization)
+	return http.DefaultClient.Do(retry)
+}
+
+func buildDigestAuthorization(challenge, username, password, method, requestURI string) (string, bool) {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(challenge)), "digest ") {
+		return "", false
+	}
+	params := make(map[string]string)
+	for _, match := range digestAuthParamRe.FindAllStringSubmatch(challenge, -1) {
+		value := match[2]
+		if value == "" {
+			value = match[3]
+		}
+		params[strings.ToLower(match[1])] = value
+	}
+	realm, nonce := params["realm"], params["nonce"]
+	if realm == "" || nonce == "" || (params["algorithm"] != "" && !strings.EqualFold(params["algorithm"], "MD5")) {
+		return "", false
+	}
+	qop := ""
+	for _, option := range strings.Split(params["qop"], ",") {
+		if strings.TrimSpace(option) == "auth" {
+			qop = "auth"
+			break
+		}
+	}
+	if params["qop"] != "" && qop == "" {
+		return "", false
+	}
+
+	cnonceBytes := make([]byte, 16)
+	if _, err := cryptorand.Read(cnonceBytes); err != nil {
+		return "", false
+	}
+	cnonce := hex.EncodeToString(cnonceBytes)
+	nc := "00000001"
+	ha1 := digestMD5(username + ":" + realm + ":" + password)
+	ha2 := digestMD5(method + ":" + requestURI)
+	response := ""
+	if qop == "auth" {
+		response = digestMD5(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":" + qop + ":" + ha2)
+	} else {
+		response = digestMD5(ha1 + ":" + nonce + ":" + ha2)
+	}
+
+	parts := []string{
+		`username="` + escapeDigestValue(username) + `"`,
+		`realm="` + escapeDigestValue(realm) + `"`,
+		`nonce="` + escapeDigestValue(nonce) + `"`,
+		`uri="` + escapeDigestValue(requestURI) + `"`,
+		`response="` + response + `"`,
+		"algorithm=MD5",
+	}
+	if opaque := params["opaque"]; opaque != "" {
+		parts = append(parts, `opaque="`+escapeDigestValue(opaque)+`"`)
+	}
+	if qop != "" {
+		parts = append(parts, "qop="+qop, "nc="+nc, `cnonce="`+cnonce+`"`)
+	}
+	return "Digest " + strings.Join(parts, ", "), true
+}
+
+func digestMD5(value string) string {
+	sum := md5.Sum([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func escapeDigestValue(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value)
 }
 
 func (s *CameraService) Update(id uint, in *UpdateCameraInput) (*model.Camera, error) {

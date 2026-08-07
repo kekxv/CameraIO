@@ -2,12 +2,66 @@ package service
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"CameraIO/internal/model"
 )
+
+func TestGetSnapshotURI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/onvif/media_service" {
+			t.Fatalf("path = %q, want media service", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), "<trt:ProfileToken>profile-2</trt:ProfileToken>") {
+			t.Fatalf("snapshot request does not contain profile token: %s", body)
+		}
+		w.Header().Set("Content-Type", "application/soap+xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <SOAP-ENV:Body><trt:GetSnapshotUriResponse><trt:MediaUri><tt:Uri>http://camera.example/snapshot.jpg</tt:Uri></trt:MediaUri></trt:GetSnapshotUriResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`))
+	}))
+	defer server.Close()
+
+	uri, err := NewONVIFService().GetSnapshotURI(context.Background(), strings.TrimPrefix(server.URL, "http://"), "admin", "pass", "profile-2")
+	if err != nil {
+		t.Fatalf("GetSnapshotURI() error = %v", err)
+	}
+	if uri != "http://camera.example/snapshot.jpg" {
+		t.Fatalf("GetSnapshotURI() = %q", uri)
+	}
+}
+
+func TestFindProfileToken_SelectsNVRChannel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/onvif/media_service" {
+			t.Fatalf("path = %q, want media service", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/soap+xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <SOAP-ENV:Body><trt:GetProfilesResponse>
+    <trt:Profiles token="profile-1"><tt:Name>MediaProfile_Channel1_MainStream</tt:Name></trt:Profiles>
+    <trt:Profiles token="profile-2"><tt:Name>MediaProfile_Channel2_MainStream</tt:Name></trt:Profiles>
+  </trt:GetProfilesResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`))
+	}))
+	defer server.Close()
+
+	token, err := NewONVIFService().FindProfileToken(context.Background(), strings.TrimPrefix(server.URL, "http://"), "admin", "pass", 2)
+	if err != nil {
+		t.Fatalf("FindProfileToken() error = %v", err)
+	}
+	if token != "profile-2" {
+		t.Fatalf("FindProfileToken() = %q, want profile-2", token)
+	}
+}
 
 func TestBuildSetSystemDateAndTimeEnvelope(t *testing.T) {
 	ts := time.Date(2025, 6, 15, 10, 30, 45, 0, time.UTC)

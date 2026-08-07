@@ -15,9 +15,10 @@
 
 1. 登录，保存 JWT。
 2. 获取摄像头列表，让用户选择摄像头。
-3. 获取 MJPEG 预览地址；需要留存图片时，保存该 MJPEG 流中的下一帧 JPEG。
-4. 开始录像，保存返回的 `recording.id`。
-5. 停止录像，从响应的 `download_url` 获取视频文件。
+3. 需要拍照时，直接调用原生 JPEG 快照接口；它不依赖预览、RTSP 拉流或 FFmpeg。
+4. 需要持续画面时，显式开始预览，读取 MJPEG，再显式结束预览。
+5. 开始录像，保存返回的 `recording.id`。
+6. 停止录像，从响应的 `download_url` 获取视频文件。
 
 ## 1. 登录
 
@@ -88,7 +89,38 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 
 ## 3. 当前图像、拍照与实时预览
 
-### 获取预览地址
+### 直接拍照
+
+`GET /api/v1/cameras/{camera_id}/snapshot`
+
+该接口直接向摄像头请求其 ONVIF 原生 JPEG 快照，不会启动 RTSP、MJPEG 或 FFmpeg，也不要求先开始预览。服务端会使用摄像头已保存的账号处理 Basic / Digest 认证；自助机不会接触设备账号或快照地址。
+
+成功时响应体就是单张 JPEG 二进制数据：
+
+```http
+Content-Type: image/jpeg
+Cache-Control: no-store
+```
+
+自助机可将响应保存为文件，或以 Blob 显示。一次请求最多等待 5 秒；设备不支持 ONVIF 快照、设备离线或认证失败时返回 `502`。该接口目前适用于 RTSP/ONVIF 摄像头；GB28181 和本地摄像头不支持原生快照。
+
+### 开始实时预览
+
+`POST /api/v1/streams/{camera_id}/start`
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": { "message": "stream started" }
+}
+```
+
+调用成功仅表示后台已开始拉流；MJPEG 的首帧就绪时间取决于摄像头关键帧间隔。拍照请使用上面的快照接口，不要等待 MJPEG 首帧。
+
+### 获取预览画面
 
 `GET /api/v1/streams/{camera_id}/mjpeg?token={token}`
 
@@ -100,9 +132,23 @@ http://192.168.1.10:8080/api/v1/streams/1/mjpeg?token=eyJhbGciOiJIUzI1NiIs...
 
 响应为 `multipart/x-mixed-replace` MJPEG 流，每个分段都是 `image/jpeg`。该接口会在需要时自动启动摄像头拉流；不需要预览后关闭客户端连接即可。
 
-### 当前图像/拍照说明
+为使自助机的预览生命周期可控，推荐始终先调用“开始实时预览”，再连接此地址。`?token=` 适用于 `<img>` 等无法设置 `Authorization` 请求头的客户端。
 
-当前版本没有单独的静态拍照接口。自助机如需“拍照”，应连接上面的 MJPEG 地址并保存收到的第一帧或最新一帧 JPEG；该文件就是拍照结果。若业务必须由服务端保存图片，需要另行增加独立的 snapshot 接口。
+### 结束实时预览
+
+`POST /api/v1/streams/{camera_id}/stop`
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": { "message": "stream stopped" }
+}
+```
+
+结束前先关闭 MJPEG 连接或移除页面中的 `<img>`，再调用此接口。该接口只结束实时预览；录像须继续通过录像接口单独停止。
 
 ## 4. 开始视频录制
 
@@ -193,7 +239,8 @@ http://192.168.1.10:8080/api/v1/streams/1/mjpeg?token=eyJhbGciOiJIUzI1NiIs...
 | `400` | 参数不完整或 `camera_id`/`recording_id` 非法；提示用户重新选择。 |
 | `401` | Token 缺失、失效或无效；重新登录后重试一次。 |
 | `404` | 摄像头或录像文件不存在；刷新摄像头/录像状态。 |
-| `500` | 设备离线、FFmpeg 拉流失败或停止失败；保留错误消息供运维排查。 |
+| `502` | 摄像头原生快照不可用、设备离线或设备认证失败；检查 ONVIF Media 快照能力和设备账号。 |
+| `500` | FFmpeg 拉流失败或停止失败；保留错误消息供运维排查。 |
 
 ## JavaScript 简例
 
@@ -212,6 +259,23 @@ const headers = {
   'Content-Type': 'application/json',
 }
 
+// 拍照：不需要开始预览，photoBlob 可直接保存或展示。
+const snapshotURL = `${baseURL}/api/v1/cameras/1/snapshot`
+const photoBlob = await fetch(snapshotURL, {
+  headers: { Authorization: `Bearer ${token}` },
+}).then(r => {
+  if (!r.ok) throw new Error(`snapshot failed: ${r.status}`)
+  return r.blob()
+})
+
+// 实时预览：显式开始、连接 MJPEG、结束。
+await fetch(`${baseURL}/api/v1/streams/1/start`, {
+  method: 'POST',
+  headers,
+})
+const previewURL = `${baseURL}/api/v1/streams/1/mjpeg?token=${encodeURIComponent(token)}`
+// 例如：previewImage.src = previewURL
+
 const started = await fetch(`${baseURL}/api/v1/recordings/start`, {
   method: 'POST',
   headers,
@@ -225,5 +289,10 @@ const stopped = await fetch(`${baseURL}/api/v1/recordings/stop`, {
 }).then(r => r.json())
 
 const downloadURL = `${baseURL}${stopped.data.download_url}?token=${encodeURIComponent(token)}`
-const previewURL = `${baseURL}/api/v1/streams/1/mjpeg?token=${encodeURIComponent(token)}`
+
+// 先清除 previewImage.src，再结束预览。
+await fetch(`${baseURL}/api/v1/streams/1/stop`, {
+  method: 'POST',
+  headers,
+})
 ```

@@ -187,6 +187,61 @@ func (s *ONVIFService) GetStreamURI(ctx context.Context, ip, user, pass, profile
 	return extractXMLTagValue(respBody, "Uri"), nil
 }
 
+// GetSnapshotURI 通过 ONVIF GetSnapshotUri 获取指定 Profile 的原生 JPEG 地址。
+// 该操作只查询设备 HTTP 快照能力，不会启动 RTSP 拉流或 FFmpeg。
+func (s *ONVIFService) GetSnapshotURI(ctx context.Context, ip, user, pass, profileToken string) (string, error) {
+	mediaEndpoint := fmt.Sprintf("http://%s/onvif/media_service", ip)
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
+                   xmlns:trt="http://www.onvif.org/ver10/media/wsdl">
+  <SOAP-ENV:Body>
+    <trt:GetSnapshotUri>
+      <trt:ProfileToken>%s</trt:ProfileToken>
+    </trt:GetSnapshotUri>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`, xmlEscape(profileToken))
+
+	respBody, err := s.callONVIF(ctx, mediaEndpoint, user, pass, body, "http://www.onvif.org/ver10/media/wsdl/GetSnapshotUri")
+	if err != nil {
+		return "", err
+	}
+	uri := extractXMLTagValue(respBody, "Uri")
+	if uri == "" {
+		return "", fmt.Errorf("ONVIF GetSnapshotUri response has no URI")
+	}
+	return uri, nil
+}
+
+// FindProfileToken 返回摄像头所对应 ONVIF Media Profile。
+// IPC（nvrChannel 为 0）使用第一个可用 Profile；NVR/DVR 必须匹配指定通道。
+func (s *ONVIFService) FindProfileToken(ctx context.Context, ip, user, pass string, nvrChannel int) (string, error) {
+	mediaEndpoint := fmt.Sprintf("http://%s/onvif/media_service", ip)
+	body := `<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
+                   xmlns:trt="http://www.onvif.org/ver10/media/wsdl">
+  <SOAP-ENV:Body>
+    <trt:GetProfiles/>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`
+	respBody, err := s.callONVIF(ctx, mediaEndpoint, user, pass, body, "http://www.onvif.org/ver10/media/wsdl/GetProfiles")
+	if err != nil {
+		return "", fmt.Errorf("get profiles: %w", err)
+	}
+	profiles := parseProfiles(respBody)
+	if len(profiles) == 0 {
+		return "", fmt.Errorf("no ONVIF media profile found")
+	}
+	if nvrChannel <= 0 {
+		return profiles[0].ProfileToken, nil
+	}
+	for _, profile := range profiles {
+		if profile.Channel == nvrChannel {
+			return profile.ProfileToken, nil
+		}
+	}
+	return "", fmt.Errorf("no ONVIF media profile found for channel %d", nvrChannel)
+}
+
 // Deviceinfo ONVIF 设备信息。
 type Deviceinfo struct {
 	Manufacturer   string `json:"manufacturer"`

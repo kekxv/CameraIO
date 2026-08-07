@@ -45,6 +45,25 @@ func (h *Handler) ListCameras(c *gin.Context) {
 	ok(c, cameras)
 }
 
+// CaptureCameraSnapshot 返回摄像头原生 JPEG 快照，不会启动预览或 FFmpeg。
+func (h *Handler) CaptureCameraSnapshot(c *gin.Context) {
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		return
+	}
+	if _, err := h.cameraSvc.Get(id); err != nil {
+		fail(c, http.StatusNotFound, err.Error())
+		return
+	}
+	jpeg, err := h.cameraSvc.CaptureSnapshot(c.Request.Context(), id)
+	if err != nil {
+		fail(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Data(http.StatusOK, "image/jpeg", jpeg)
+}
+
 func (h *Handler) UpdateCamera(c *gin.Context) {
 	id, err := parseUintParam(c, "id")
 	if err != nil {
