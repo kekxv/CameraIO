@@ -267,6 +267,11 @@ func (s *CameraService) CaptureSnapshot(ctx context.Context, cameraID uint) ([]b
 	defer resp.Body.Close()
 	log.Printf("[snapshot] camera %d response status=%s content_type=%q", cameraID, resp.Status, resp.Header.Get("Content-Type"))
 	if resp.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if message := snapshotFailureDetail(detail); message != "" {
+			log.Printf("[snapshot] camera %d response detail=%q", cameraID, message)
+			return nil, fmt.Errorf("camera snapshot returned %s: %s", resp.Status, message)
+		}
 		return nil, fmt.Errorf("camera snapshot returned %s", resp.Status)
 	}
 	jpeg, err := io.ReadAll(io.LimitReader(resp.Body, maxSnapshotBytes+1))
@@ -286,6 +291,14 @@ func (s *CameraService) CaptureSnapshot(ctx context.Context, cameraID uint) ([]b
 // isJPEG 通过 JPEG 的 SOI/EOI 标记确认数据格式，兼容返回错误 MIME 类型的设备。
 func isJPEG(data []byte) bool {
 	return len(data) >= 4 && data[0] == 0xff && data[1] == 0xd8 && data[len(data)-2] == 0xff && data[len(data)-1] == 0xd9
+}
+
+func snapshotFailureDetail(body []byte) string {
+	message := strings.Join(strings.Fields(string(body)), " ")
+	if len(message) > 512 {
+		return message[:512] + "..."
+	}
+	return message
 }
 
 func snapshotURLForLog(raw string) string {

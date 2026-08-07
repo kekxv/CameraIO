@@ -188,6 +188,51 @@ func TestCameraSnapshotReturnsNotFoundForMissingCamera(t *testing.T) {
 	}
 }
 
+func TestCameraSnapshotReportsDeviceFailureDetail(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/onvif/media_service":
+			requestBody, _ := io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/soap+xml")
+			if strings.Contains(string(requestBody), "GetProfiles") {
+				_, _ = w.Write([]byte(`<?xml version="1.0"?><SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><SOAP-ENV:Body><trt:GetProfilesResponse><trt:Profiles token="profile-1"><tt:Name>MediaProfile_Channel1_MainStream</tt:Name></trt:Profiles></trt:GetProfilesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>`))
+				return
+			}
+			if strings.Contains(string(requestBody), "GetSnapshotUri") {
+				_, _ = w.Write([]byte(`<?xml version="1.0"?><SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><SOAP-ENV:Body><trt:GetSnapshotUriResponse><trt:MediaUri><tt:Uri>` + server.URL + `/snapshot</tt:Uri></trt:MediaUri></trt:GetSnapshotUriResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>`))
+				return
+			}
+			t.Fatalf("unexpected ONVIF request: %s", requestBody)
+		case "/snapshot":
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(599)
+			_, _ = w.Write([]byte("LAPI error: media source unavailable"))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	h, db := setupTestHandlerWithDB(t)
+	camera := model.Camera{Name: "failing snapshot camera", IP: strings.TrimPrefix(server.URL, "http://"), Port: 554, RTSPUrl: "rtsp://example.invalid/live", AccessProtocol: model.ProtocolRTSP}
+	if err := db.Create(&camera).Error; err != nil {
+		t.Fatalf("create camera: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cameras/"+uintToStr(camera.ID)+"/snapshot", nil)
+	req.Header.Set("Authorization", "Bearer "+createTestUser(t, h))
+	h.SetupRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "LAPI error: media source unavailable") {
+		t.Fatalf("response does not include device failure detail: %s", w.Body.String())
+	}
+}
+
 func TestCameraSnapshotAcceptsJPEGWithGenericContentTypeWithoutStartingStream(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
