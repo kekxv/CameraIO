@@ -63,6 +63,68 @@ func TestFindProfileToken_SelectsNVRChannel(t *testing.T) {
 	}
 }
 
+func TestGetSnapshotURIFallsBackToDeviceService(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/onvif/media_service":
+			w.WriteHeader(http.StatusNotFound)
+		case "/onvif/device_service":
+			body, _ := io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/soap+xml")
+			if strings.Contains(string(body), "GetSystemDateAndTime") {
+				_, _ = w.Write([]byte(`<SOAP-ENV:Envelope><SOAP-ENV:Body/></SOAP-ENV:Envelope>`))
+				return
+			}
+			_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <SOAP-ENV:Body><trt:GetSnapshotUriResponse><trt:MediaUri><tt:Uri>http://camera.example/snapshot.jpg</tt:Uri></trt:MediaUri></trt:GetSnapshotUriResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	uri, err := NewONVIFService().GetSnapshotURI(context.Background(), strings.TrimPrefix(server.URL, "http://"), "admin", "pass", "profile-1")
+	if err != nil {
+		t.Fatalf("GetSnapshotURI() error = %v", err)
+	}
+	if uri != "http://camera.example/snapshot.jpg" {
+		t.Fatalf("GetSnapshotURI() = %q", uri)
+	}
+}
+
+func TestFindProfileTokenFallsBackToDeviceService(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/onvif/media_service":
+			w.WriteHeader(http.StatusNotFound)
+		case "/onvif/device_service":
+			body, _ := io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/soap+xml")
+			if strings.Contains(string(body), "GetSystemDateAndTime") {
+				_, _ = w.Write([]byte(`<SOAP-ENV:Envelope><SOAP-ENV:Body/></SOAP-ENV:Envelope>`))
+				return
+			}
+			_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <SOAP-ENV:Body><trt:GetProfilesResponse><trt:Profiles token="profile-1"><tt:Name>MediaProfile_Channel1_MainStream</tt:Name></trt:Profiles></trt:GetProfilesResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	token, err := NewONVIFService().FindProfileToken(context.Background(), strings.TrimPrefix(server.URL, "http://"), "admin", "pass", 0)
+	if err != nil {
+		t.Fatalf("FindProfileToken() error = %v", err)
+	}
+	if token != "profile-1" {
+		t.Fatalf("FindProfileToken() = %q", token)
+	}
+}
+
 func TestBuildSetSystemDateAndTimeEnvelope(t *testing.T) {
 	ts := time.Date(2025, 6, 15, 10, 30, 45, 0, time.UTC)
 	env := buildSetSystemDateAndTimeEnvelope(ts, "GMT0")

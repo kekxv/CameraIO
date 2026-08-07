@@ -190,7 +190,6 @@ func (s *ONVIFService) GetStreamURI(ctx context.Context, ip, user, pass, profile
 // GetSnapshotURI 通过 ONVIF GetSnapshotUri 获取指定 Profile 的原生 JPEG 地址。
 // 该操作只查询设备 HTTP 快照能力，不会启动 RTSP 拉流或 FFmpeg。
 func (s *ONVIFService) GetSnapshotURI(ctx context.Context, ip, user, pass, profileToken string) (string, error) {
-	mediaEndpoint := fmt.Sprintf("http://%s/onvif/media_service", ip)
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
                    xmlns:trt="http://www.onvif.org/ver10/media/wsdl">
@@ -201,7 +200,7 @@ func (s *ONVIFService) GetSnapshotURI(ctx context.Context, ip, user, pass, profi
   </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>`, xmlEscape(profileToken))
 
-	respBody, err := s.callONVIF(ctx, mediaEndpoint, user, pass, body, "http://www.onvif.org/ver10/media/wsdl/GetSnapshotUri")
+	respBody, err := s.callMediaONVIF(ctx, ip, user, pass, body, "http://www.onvif.org/ver10/media/wsdl/GetSnapshotUri")
 	if err != nil {
 		return "", err
 	}
@@ -215,7 +214,6 @@ func (s *ONVIFService) GetSnapshotURI(ctx context.Context, ip, user, pass, profi
 // FindProfileToken 返回摄像头所对应 ONVIF Media Profile。
 // IPC（nvrChannel 为 0）使用第一个可用 Profile；NVR/DVR 必须匹配指定通道。
 func (s *ONVIFService) FindProfileToken(ctx context.Context, ip, user, pass string, nvrChannel int) (string, error) {
-	mediaEndpoint := fmt.Sprintf("http://%s/onvif/media_service", ip)
 	body := `<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
                    xmlns:trt="http://www.onvif.org/ver10/media/wsdl">
@@ -223,7 +221,7 @@ func (s *ONVIFService) FindProfileToken(ctx context.Context, ip, user, pass stri
     <trt:GetProfiles/>
   </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>`
-	respBody, err := s.callONVIF(ctx, mediaEndpoint, user, pass, body, "http://www.onvif.org/ver10/media/wsdl/GetProfiles")
+	respBody, err := s.callMediaONVIF(ctx, ip, user, pass, body, "http://www.onvif.org/ver10/media/wsdl/GetProfiles")
 	if err != nil {
 		return "", fmt.Errorf("get profiles: %w", err)
 	}
@@ -240,6 +238,26 @@ func (s *ONVIFService) FindProfileToken(ctx context.Context, ip, user, pass stri
 		}
 	}
 	return "", fmt.Errorf("no ONVIF media profile found for channel %d", nvrChannel)
+}
+
+// callMediaONVIF 优先调用 ONVIF 独立 MediaService；部分宇视等设备将 Media
+// 操作复用到 DeviceService，独立地址不可用时回退到已探测的 DeviceService。
+func (s *ONVIFService) callMediaONVIF(ctx context.Context, ip, user, pass, body, action string) (string, error) {
+	mediaEndpoint := fmt.Sprintf("http://%s/onvif/media_service", ip)
+	respBody, mediaErr := s.callONVIF(ctx, mediaEndpoint, user, pass, body, action)
+	if mediaErr == nil {
+		return respBody, nil
+	}
+
+	deviceEndpoint, probeErr := s.probeDeviceEndpoint(ctx, ip, user, pass)
+	if probeErr != nil {
+		return "", mediaErr
+	}
+	respBody, deviceErr := s.callONVIF(ctx, deviceEndpoint, user, pass, body, action)
+	if deviceErr != nil {
+		return "", fmt.Errorf("ONVIF media service failed: %v; device service failed: %w", mediaErr, deviceErr)
+	}
+	return respBody, nil
 }
 
 // Deviceinfo ONVIF 设备信息。
