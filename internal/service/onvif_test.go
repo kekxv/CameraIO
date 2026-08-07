@@ -21,6 +21,13 @@ func TestIsJPEG(t *testing.T) {
 	}
 }
 
+func TestSnapshotURLForLogRemovesCredentialsAndQuery(t *testing.T) {
+	got := snapshotURLForLog("http://admin:secret@192.168.14.33/snapshot.jpg?token=secret")
+	if got != "http://192.168.14.33/snapshot.jpg" {
+		t.Fatalf("snapshotURLForLog() = %q", got)
+	}
+}
+
 func TestGetSnapshotURI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/onvif/media_service" {

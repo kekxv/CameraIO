@@ -258,11 +258,14 @@ func (s *CameraService) CaptureSnapshot(ctx context.Context, cameraID uint) ([]b
 		return nil, fmt.Errorf("resolve snapshot URI: %w", err)
 	}
 
+	log.Printf("[snapshot] camera %d requesting %s", cameraID, snapshotURLForLog(snapshotURI))
 	resp, err := fetchSnapshot(ctx, snapshotURI, camera.Username, camera.Password)
 	if err != nil {
+		log.Printf("[snapshot] camera %d request failed: %v", cameraID, err)
 		return nil, fmt.Errorf("request camera snapshot failed")
 	}
 	defer resp.Body.Close()
+	log.Printf("[snapshot] camera %d response status=%s content_type=%q", cameraID, resp.Status, resp.Header.Get("Content-Type"))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("camera snapshot returned %s", resp.Status)
 	}
@@ -274,6 +277,7 @@ func (s *CameraService) CaptureSnapshot(ctx context.Context, cameraID uint) ([]b
 		return nil, fmt.Errorf("camera snapshot has invalid size")
 	}
 	if !isJPEG(jpeg) {
+		log.Printf("[snapshot] camera %d response is not JPEG: bytes=%d", cameraID, len(jpeg))
 		return nil, fmt.Errorf("camera snapshot is not JPEG (content type %q)", strings.ToLower(resp.Header.Get("Content-Type")))
 	}
 	return jpeg, nil
@@ -282,6 +286,17 @@ func (s *CameraService) CaptureSnapshot(ctx context.Context, cameraID uint) ([]b
 // isJPEG 通过 JPEG 的 SOI/EOI 标记确认数据格式，兼容返回错误 MIME 类型的设备。
 func isJPEG(data []byte) bool {
 	return len(data) >= 4 && data[0] == 0xff && data[1] == 0xd8 && data[len(data)-2] == 0xff && data[len(data)-1] == 0xd9
+}
+
+func snapshotURLForLog(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid snapshot URI>"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 func fetchSnapshot(ctx context.Context, snapshotURI, username, password string) (*http.Response, error) {
