@@ -67,6 +67,7 @@ export const discoverNVRChannels = (data) => api.post('/cameras/discover-channel
 export const scanNetwork = (data) => api.post('/cameras/scan-network', data || { subnet: 'auto' }).then((r) => r.data.data)
 export const setCameraCodec = (id, codec) => api.post(`/cameras/${id}/set-codec`, { codec }).then((r) => r.data.data)
 export const setCameraNetwork = (id, config) => api.post(`/cameras/${id}/set-network`, config).then((r) => r.data.data)
+export const captureSnapshot = (id) => api.get(`/cameras/${id}/snapshot`, { responseType: 'blob' }).then((r) => r.data)
 
 // ---------- Local Cameras ----------
 

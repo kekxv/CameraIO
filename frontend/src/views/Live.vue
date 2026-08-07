@@ -138,6 +138,15 @@
                 </svg>
               </button>
               <button
+                @click="takeSnapshot(cam)"
+                :disabled="capturing[cam.id]"
+                class="p-1 rounded-md text-slate-300 hover:text-white hover:bg-white/15 transition-colors disabled:opacity-50"
+                :title="capturing[cam.id] ? '抓拍中...' : '原生抓拍'"
+              >
+                <span v-if="capturing[cam.id]" class="block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+                <AppIcon v-else name="camera" class="w-3.5 h-3.5" />
+              </button>
+              <button
                 @click="toggleRecord(cam)"
                 :disabled="recording[cam.id] === 'toggling'"
                 class="p-1 rounded-md transition-colors"
@@ -219,12 +228,32 @@
         </div>
       </div>
     </transition>
+
+    <!-- 原生抓拍结果 -->
+    <transition name="fade">
+      <div v-if="snapshotTarget && snapshotURL" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" @click.self="closeSnapshot">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-full flex flex-col overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-semibold text-slate-800">原生抓拍</h3>
+              <p class="text-xs text-slate-500 mt-0.5">{{ snapshotTarget.name }} · {{ snapshotTarget.ip }}</p>
+            </div>
+            <button @click="closeSnapshot" class="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md" title="关闭">
+              <AppIcon name="close" class="w-4 h-4" />
+            </button>
+          </div>
+          <div class="min-h-0 p-4 bg-slate-100 flex items-center justify-center">
+            <img :src="snapshotURL" :alt="`${snapshotTarget.name} 抓拍`" class="max-w-full max-h-[70vh] object-contain rounded shadow-sm" />
+          </div>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { listCameras, startStream, stopStream, startRecording, stopRecording, connectEventBus } from '../api'
+import { listCameras, startStream, stopStream, startRecording, stopRecording, captureSnapshot, connectEventBus } from '../api'
 import AppIcon from '../components/AppIcon.vue'
 
 const cameras = ref([])
@@ -234,6 +263,9 @@ const streaming = ref({})
 const starting = ref({})
 const recording = ref({})
 const recordingIdMap = ref({})
+const capturing = ref({})
+const snapshotTarget = ref(null)
+const snapshotURL = ref('')
 const showRecordDialog = ref(false)
 const recordTarget = ref(null)
 const recordFormat = ref('mp4')
@@ -321,6 +353,26 @@ const stopStreamFor = async (cameraId) => {
 
 const handleStreamError = (cameraId) => {
   streaming.value[cameraId] = false
+}
+
+const closeSnapshot = () => {
+  if (snapshotURL.value) URL.revokeObjectURL(snapshotURL.value)
+  snapshotURL.value = ''
+  snapshotTarget.value = null
+}
+
+const takeSnapshot = async (cam) => {
+  capturing.value[cam.id] = true
+  try {
+    const jpeg = await captureSnapshot(cam.id)
+    closeSnapshot()
+    snapshotURL.value = URL.createObjectURL(jpeg)
+    snapshotTarget.value = cam
+  } catch (err) {
+    alert('抓拍失败: ' + (err.response?.data?.message || err.message))
+  } finally {
+    delete capturing.value[cam.id]
+  }
 }
 
 const toggleRecord = async (cam) => {
@@ -418,6 +470,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   if (clockTimer) clearInterval(clockTimer)
   if (eventWs) eventWs.close()
+  closeSnapshot()
   // 离开页面时自动停止所有预览
   stopAllStreams()
 })
