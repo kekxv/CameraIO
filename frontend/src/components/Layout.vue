@@ -19,7 +19,7 @@
             ? 'bg-primary-600 text-white'
             : 'text-slate-300 hover:bg-slate-800 hover:text-white'"
         >
-          <span class="text-base" v-html="item.icon"></span>
+          <AppIcon :name="item.icon" class="w-4 h-4 flex-shrink-0" />
           <span>{{ item.label }}</span>
         </router-link>
       </nav>
@@ -52,11 +52,12 @@
 import { computed } from 'vue'
 import { getCurrentUser, logout } from '../api'
 import FfmpegBanner from './FfmpegBanner.vue'
+import AppIcon from './AppIcon.vue'
 
 const navItems = [
-  { to: '/cameras', label: '摄像头管理', icon: '📷' },
-  { to: '/live', label: '实时预览', icon: '📺' },
-  { to: '/recordings', label: '录像中心', icon: '🎬' },
+  { to: '/cameras', label: '摄像头管理', icon: 'camera' },
+  { to: '/live', label: '实时预览', icon: 'monitor' },
+  { to: '/recordings', label: '录像中心', icon: 'film' },
 ]
 
 const currentUser = computed(() => getCurrentUser())

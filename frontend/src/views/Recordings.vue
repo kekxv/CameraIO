@@ -12,17 +12,19 @@
     <div class="flex gap-1 mb-4 bg-slate-100 rounded-lg p-0.5 w-fit">
       <button
         @click="activeTab = 'recordings'"
-        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all"
+        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all inline-flex items-center gap-1.5"
         :class="activeTab === 'recordings' ? 'bg-white text-primary-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
       >
-        🎬 录像列表
+        <AppIcon name="film" class="w-4 h-4" />
+        <span>录像列表</span>
       </button>
       <button
         @click="activeTab = 'schedules'"
-        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all"
+        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all inline-flex items-center gap-1.5"
         :class="activeTab === 'schedules' ? 'bg-white text-primary-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
       >
-        ⏰ 定时录像
+        <AppIcon name="clock" class="w-4 h-4" />
+        <span>定时录像</span>
       </button>
     </div>
 
@@ -75,7 +77,7 @@
 
       <!-- 空状态 -->
       <div v-else-if="recordings.length === 0" class="text-center py-16">
-        <p class="text-4xl mb-3">🎬</p>
+        <AppIcon name="film" class="w-12 h-12 mx-auto mb-3 text-slate-300" />
         <p class="text-slate-500">暂无录像记录</p>
       </div>
 
@@ -136,30 +138,33 @@
                     v-if="rec.status === 'completed'"
                     @click="previewRecording(rec)"
                     class="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition-colors"
+                    title="预览"
                   >
-                    👁
+                    <AppIcon name="eye" class="w-3.5 h-3.5" />
                   </button>
                   <a
                     v-if="rec.status === 'completed'"
                     :href="downloadUrl(rec.id)"
                     :download="`recording_${rec.id}.${rec.format || 'mp4'}`"
                     class="px-2 py-1 text-xs bg-primary-50 hover:bg-primary-100 text-primary-700 rounded transition-colors"
+                    title="下载"
                   >
-                    ⬇
+                    <AppIcon name="download" class="w-3.5 h-3.5" />
                   </a>
                   <button
                     v-if="rec.status === 'recording'"
                     @click="handleStopRecording(rec)"
                     class="px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded transition-colors"
+                    title="停止录像"
                   >
-                    ⏹
+                    <AppIcon name="stop" class="w-3.5 h-3.5" />
                   </button>
                   <button
                     @click="handleDeleteRecording(rec)"
                     class="px-2 py-1 text-xs bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 rounded transition-colors"
                     title="删除"
                   >
-                    🗑
+                    <AppIcon name="trash" class="w-3.5 h-3.5" />
                   </button>
                 </div>
               </td>
@@ -208,7 +213,7 @@
 
       <!-- 计划列表 -->
       <div v-if="schedules.length === 0" class="text-center py-16">
-        <p class="text-4xl mb-3">⏰</p>
+        <AppIcon name="clock" class="w-12 h-12 mx-auto mb-3 text-slate-300" />
         <p class="text-slate-500">暂无定时录像计划</p>
       </div>
 
@@ -235,15 +240,15 @@
 
             <div class="mt-3 space-y-1.5 text-xs text-slate-600">
               <div class="flex items-center gap-2">
-                <span class="text-slate-400">🕐</span>
+                <AppIcon name="clock" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                 <span class="font-mono">{{ sch.start_time }} - {{ sch.end_time }}</span>
               </div>
               <div class="flex items-center gap-2">
-                <span class="text-slate-400">📅</span>
+                <AppIcon name="calendar" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                 <span>{{ daysLabel(sch.days) }}</span>
               </div>
               <div class="flex items-center gap-2">
-                <span class="text-slate-400">🎬</span>
+                <AppIcon name="film" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                 <span>{{ (sch.format || 'mp4').toUpperCase() }}</span>
                 <span v-if="sch.bitrate > 0" class="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px]">{{ sch.bitrate }}k</span>
                 <span v-if="sch.with_audio" class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px]">含音频</span>
@@ -254,21 +259,24 @@
           <div class="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2">
             <button
               @click="toggleSchedule(sch)"
-              class="flex-1 px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
+              class="flex-1 px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors flex items-center justify-center gap-1.5"
             >
-              {{ sch.enabled ? '⏸ 停用' : '▶ 启用' }}
+              <AppIcon :name="sch.enabled ? 'pause' : 'play'" class="w-3.5 h-3.5" />
+              <span>{{ sch.enabled ? '停用' : '启用' }}</span>
             </button>
             <button
               @click="openScheduleDialog(sch)"
               class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
+              title="编辑计划"
             >
-              ✏️
+              <AppIcon name="edit" class="w-3.5 h-3.5" />
             </button>
             <button
               @click="handleDeleteSchedule(sch)"
               class="px-2 py-1.5 text-xs bg-white border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors"
+              title="删除计划"
             >
-              🗑
+              <AppIcon name="trash" class="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -290,8 +298,9 @@
           <button
             @click="previewRec = null"
             class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-100 text-slate-500"
+            title="关闭"
           >
-            ✕
+            <AppIcon name="close" class="w-4 h-4" />
           </button>
         </div>
         <div class="bg-black aspect-video flex items-center justify-center">
@@ -306,9 +315,10 @@
           <a
             :href="downloadUrl(previewRec.id)"
             :download="`recording_${previewRec.id}.${previewRec.format || 'mp4'}`"
-            class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md text-sm transition-colors"
+            class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md text-sm transition-colors inline-flex items-center gap-1.5"
           >
-            ⬇ 下载
+            <AppIcon name="download" class="w-4 h-4" />
+            <span>下载</span>
           </a>
         </div>
       </div>
@@ -430,6 +440,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import AppIcon from '../components/AppIcon.vue'
 import {
   listCameras, listRecordings, stopRecording, deleteRecording,
   listSchedules, createSchedule, updateSchedule, deleteSchedule,

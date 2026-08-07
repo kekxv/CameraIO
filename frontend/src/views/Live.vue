@@ -51,7 +51,7 @@
       <!-- 空状态 -->
       <div v-else-if="cameras.length === 0" class="h-full flex items-center justify-center text-slate-400">
         <div class="text-center">
-          <p class="text-5xl mb-3">📷</p>
+          <AppIcon name="camera" class="w-14 h-14 mx-auto mb-3 text-slate-300" />
           <p class="text-sm text-slate-500">暂无摄像头</p>
           <router-link to="/cameras" class="text-primary-600 hover:text-primary-500 text-sm mt-2 inline-block">去添加 →</router-link>
         </div>
@@ -158,7 +158,10 @@
     <transition name="fade">
       <div v-if="showRecordDialog" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="showRecordDialog = false">
         <div class="bg-white rounded-xl shadow-xl w-80 p-5">
-          <h3 class="text-sm font-semibold text-slate-800 mb-3">🎬 录像设置</h3>
+          <h3 class="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-1.5">
+            <AppIcon name="film" class="w-4 h-4" />
+            <span>录像设置</span>
+          </h3>
           <p class="text-xs text-slate-500 mb-3">{{ recordTarget?.name }} · {{ recordTarget?.ip }}</p>
 
           <!-- 格式选择 -->
@@ -208,8 +211,9 @@
           <!-- 操作按钮 -->
           <div class="flex justify-end gap-2">
             <button @click="showRecordDialog = false" class="px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-md">取消</button>
-            <button @click="confirmStartRecording" class="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-md text-xs font-medium">
-              ⏺ 开始录像
+            <button @click="confirmStartRecording" class="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-md text-xs font-medium inline-flex items-center gap-1.5">
+              <AppIcon name="record" class="w-3.5 h-3.5" />
+              <span>开始录像</span>
             </button>
           </div>
         </div>
@@ -221,6 +225,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { listCameras, startStream, stopStream, startRecording, stopRecording, connectEventBus } from '../api'
+import AppIcon from '../components/AppIcon.vue'
 
 const cameras = ref([])
 const loading = ref(true)

@@ -9,9 +9,10 @@
       <div class="flex gap-2">
         <button
           @click="handleScanLAN"
-          class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm font-medium transition-colors"
+          class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm font-medium transition-colors inline-flex items-center gap-1.5"
         >
-          📡 扫描局域网
+          <AppIcon name="scan" class="w-4 h-4" />
+          <span>扫描局域网</span>
         </button>
         <button
           @click="showAddDialog = true"
@@ -27,7 +28,7 @@
 
     <!-- 空状态 -->
     <div v-else-if="cameras.length === 0" class="text-center py-16">
-      <p class="text-4xl mb-3">📷</p>
+      <AppIcon name="camera" class="w-12 h-12 mx-auto mb-3 text-slate-300" />
       <p class="text-slate-500">还没有添加摄像头</p>
       <button
         @click="showAddDialog = true"
@@ -152,8 +153,9 @@
             </template>
 
             <!-- 错误信息展示 -->
-            <div v-if="cam.last_error" class="mt-1 px-2 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-600">
-              ⚠️ {{ cam.last_error }}
+            <div v-if="cam.last_error" class="mt-1 px-2 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-600 flex items-start gap-1.5">
+              <AppIcon name="warning" class="w-3.5 h-3.5 mt-px flex-shrink-0" />
+              <span>{{ cam.last_error }}</span>
             </div>
           </div>
         </div>
@@ -164,9 +166,13 @@
             <button
               @click="handleSyncTime(cam)"
               :disabled="syncingId === cam.id"
-              class="flex-1 px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:opacity-50"
+              class="flex-1 px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
             >
-              {{ syncingId === cam.id ? '同步中...' : '🕒 同步时间' }}
+              <span v-if="syncingId === cam.id">同步中...</span>
+              <template v-else>
+                <AppIcon name="clock" class="w-3.5 h-3.5" />
+                <span>同步时间</span>
+              </template>
             </button>
             <button
               @click="handleTest(cam)"
@@ -174,28 +180,31 @@
               class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:opacity-50"
               title="测试连接"
             >
-              {{ testingId === cam.id ? '...' : '🔌' }}
+              <span v-if="testingId === cam.id">...</span>
+              <AppIcon v-else name="plug" class="w-3.5 h-3.5" />
             </button>
             <button
               @click="showNetworkDialog(cam)"
               class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
               title="网络配置"
             >
-              🌐
+              <AppIcon name="globe" class="w-3.5 h-3.5" />
             </button>
           </template>
           <!-- GB28181: 显示注册状态（无同步/测试/网络） -->
           <button
             @click="handleEdit(cam)"
             class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
+            title="编辑"
           >
-            ✏️
+            <AppIcon name="edit" class="w-3.5 h-3.5" />
           </button>
           <button
             @click="handleDelete(cam)"
             class="px-2 py-1.5 text-xs bg-white border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors"
+            title="删除"
           >
-            🗑️
+            <AppIcon name="trash" class="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -317,9 +326,13 @@
                 type="button"
                 @click="handleTestByIP"
                 :disabled="testingByIP"
-                class="px-3 py-1.5 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100 transition-colors disabled:opacity-50"
+                class="px-3 py-1.5 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100 transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
               >
-                {{ testingByIP ? '测试中...' : '🔌 测试连接' }}
+                <span v-if="testingByIP">测试中...</span>
+                <template v-else>
+                  <AppIcon name="plug" class="w-3.5 h-3.5" />
+                  <span>测试连接</span>
+                </template>
               </button>
               <span v-if="testResult" class="text-xs" :class="testResult.ok ? 'text-emerald-600' : 'text-red-600'">
                 {{ testResult.message }}
@@ -361,9 +374,13 @@
                 @click="handleDiscoverChannels"
                 :disabled="discovering || !form.ip || !form.username || !form.password"
                 :title="!form.ip || !form.username || !form.password ? '请先填写 IP、用户名和密码' : ''"
-                class="px-3 py-1.5 text-xs bg-purple-50 border border-purple-200 text-purple-700 rounded hover:bg-purple-100 transition-colors disabled:opacity-50"
+                class="px-3 py-1.5 text-xs bg-purple-50 border border-purple-200 text-purple-700 rounded hover:bg-purple-100 transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
               >
-                {{ discovering ? '扫描中...' : '🔍 扫描 NVR 通道' }}
+                <span v-if="discovering">扫描中...</span>
+                <template v-else>
+                  <AppIcon name="search" class="w-3.5 h-3.5" />
+                  <span>扫描 NVR 通道</span>
+                </template>
               </button>
               <span v-if="discoveredChannels.length > 0" class="text-xs text-slate-500">
                 发现 {{ discoveredChannels.length }} 个通道，已选 {{ selectedChannels.length }} 个
@@ -489,9 +506,13 @@
               type="button"
               @click="scanLocalCameras"
               :disabled="scanningLocal"
-              class="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-sm transition-colors disabled:opacity-50"
+              class="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
             >
-              {{ scanningLocal ? '扫描中...' : '🔍 扫描本机摄像头' }}
+              <span v-if="scanningLocal">扫描中...</span>
+              <template v-else>
+                <AppIcon name="search" class="w-4 h-4" />
+                <span>扫描本机摄像头</span>
+              </template>
             </button>
             <div v-if="localCameraList.length > 0" class="border border-slate-200 rounded-md overflow-hidden">
               <div
@@ -530,9 +551,13 @@
               type="button"
               @click="handleTest(editingCamera)"
               :disabled="testingId === editingCamera.id"
-              class="px-4 py-2 text-sm bg-blue-50 border border-blue-200 text-blue-700 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50"
+              class="px-4 py-2 text-sm bg-blue-50 border border-blue-200 text-blue-700 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
             >
-              {{ testingId === editingCamera.id ? '测试中...' : '🔌 测试连接' }}
+              <span v-if="testingId === editingCamera.id">测试中...</span>
+              <template v-else>
+                <AppIcon name="plug" class="w-4 h-4" />
+                <span>测试连接</span>
+              </template>
             </button>
             <button
               type="submit"
@@ -557,8 +582,9 @@
           <div v-if="testInfoModal.serial_number"><span class="text-slate-400">序列号:</span> <span class="font-mono">{{ testInfoModal.serial_number }}</span></div>
           <div v-if="testInfoModal.hardware_id"><span class="text-slate-400">硬件 ID:</span> {{ testInfoModal.hardware_id }}</div>
           <div v-if="testInfoModal.timezone"><span class="text-slate-400">时区:</span> {{ testInfoModal.timezone }}</div>
-          <div v-if="testInfoModal.permission_note" class="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
-            ⚠️ {{ testInfoModal.permission_note }}
+          <div v-if="testInfoModal.permission_note" class="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5">
+            <AppIcon name="warning" class="w-3.5 h-3.5 mt-px flex-shrink-0" />
+            <span>{{ testInfoModal.permission_note }}</span>
           </div>
         </div>
         <div class="mt-4 flex justify-end">
@@ -571,7 +597,10 @@
     <div v-if="showScanDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="showScanDialog = false">
       <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[85vh] overflow-y-auto">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-lg font-semibold text-slate-800">📡 扫描局域网设备</h2>
+          <h2 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+            <AppIcon name="scan" class="w-5 h-5" />
+            <span>扫描局域网设备</span>
+          </h2>
           <button @click="showScanDialog = false" class="text-slate-400 hover:text-slate-600 text-xl">&times;</button>
         </div>
 
@@ -608,10 +637,11 @@
                 v-model="selectedDevices"
                 class="rounded text-primary-600"
               />
-              <!-- 品牌图标 -->
-              <span class="text-lg">
-                {{ dev.brand === 'hikvision' ? '🔴' : dev.brand === 'uniview' ? '🔵' : '⚪' }}
-              </span>
+              <!-- 品牌颜色标记 -->
+              <span
+                class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                :class="dev.brand === 'hikvision' ? 'bg-red-500' : dev.brand === 'uniview' ? 'bg-blue-500' : 'bg-slate-300'"
+              ></span>
               <!-- 设备信息 -->
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2">
@@ -628,7 +658,7 @@
                   <span v-if="dev.manufacturer">{{ dev.manufacturer }}</span>
                   <span v-if="dev.model"> · {{ dev.model }}</span>
                   <span v-if="dev.channels > 0"> · {{ dev.channels }} 通道</span>
-                  <span v-if="dev.rtsp_enabled"> · RTSP ✓</span>
+                  <span v-if="dev.rtsp_enabled"> · RTSP 已启用</span>
                 </div>
               </div>
             </label>
@@ -638,9 +668,10 @@
           <div class="flex items-center justify-between mt-4">
             <button
               @click="handleScanLAN"
-              class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md transition-colors"
+              class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md transition-colors inline-flex items-center gap-1.5"
             >
-              🔄 重新扫描
+              <AppIcon name="refresh" class="w-3.5 h-3.5" />
+              <span>重新扫描</span>
             </button>
             <div class="flex gap-2">
               <button
@@ -659,8 +690,9 @@
             </div>
           </div>
 
-          <p class="text-xs text-slate-400 mt-3">
-            💡 设备添加后需在列表中编辑用户名和密码，才能正常拉流。
+          <p class="text-xs text-slate-400 mt-3 flex items-start gap-1.5">
+            <AppIcon name="info" class="w-3.5 h-3.5 mt-px flex-shrink-0" />
+            <span>设备添加后需在列表中编辑用户名和密码，才能正常拉流。</span>
           </p>
         </div>
       </div>
@@ -669,7 +701,10 @@
     <!-- 网络配置弹窗 -->
     <div v-if="showNetworkConfigDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" @click.self="showNetworkConfigDialog = false">
       <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-        <h3 class="text-lg font-semibold text-slate-800 mb-4">🌐 网络配置 — {{ networkConfigCamera?.name }}</h3>
+        <h3 class="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+          <AppIcon name="globe" class="w-5 h-5" />
+          <span>网络配置 — {{ networkConfigCamera?.name }}</span>
+        </h3>
         <p class="text-xs text-slate-500 mb-3">修改设备 IP 地址。修改后设备会重启，需使用新 IP 重新连接。</p>
 
         <div class="space-y-3">
@@ -699,8 +734,9 @@
             </div>
           </div>
 
-          <div class="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-700">
-            ⚠️ 修改 IP 后，当前连接会断开。请确保新 IP 与服务器在同一网段。
+          <div class="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-700 flex items-start gap-1.5">
+            <AppIcon name="warning" class="w-3.5 h-3.5 mt-px flex-shrink-0" />
+            <span>修改 IP 后，当前连接会断开。请确保新 IP 与服务器在同一网段。</span>
           </div>
         </div>
 
@@ -718,6 +754,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import AppIcon from '../components/AppIcon.vue'
 import {
   listCameras, createCamera, updateCamera, deleteCamera, syncCameraTime, listLocalCameras,
   testCameraConnection, testCameraConnectionByIP, discoverNVRChannels, scanNetwork, setCameraCodec,
@@ -913,7 +950,7 @@ const handleTestByIP = async () => {
       password: form.value.password,
     })
     const label = info.manufacturer ? `${info.manufacturer} ${info.model}` : '连接成功'
-    testResult.value = { ok: true, message: label + (info.permission_note ? ' ⚠️' : '') }
+    testResult.value = { ok: true, message: label + (info.permission_note ? '（权限受限）' : '') }
     testInfoModal.value = info
   } catch (err) {
     testResult.value = { ok: false, message: '连接失败: ' + (err.response?.data?.message || err.message) }
@@ -929,9 +966,9 @@ const handleTest = async (cam) => {
     const info = await testCameraConnection(cam.id)
     testInfoModal.value = info
     const label = info.manufacturer ? `${info.manufacturer} ${info.model}` : '设备'
-    alert(`✅ ${label} 连接成功` + (info.permission_note ? '\n⚠️ ' + info.permission_note : ''))
+    alert(`${label} 连接成功` + (info.permission_note ? '\n注意：' + info.permission_note : ''))
   } catch (err) {
-    alert('❌ 连接失败: ' + (err.response?.data?.message || err.message))
+    alert('连接失败：' + (err.response?.data?.message || err.message))
   } finally {
     testingId.value = null
   }

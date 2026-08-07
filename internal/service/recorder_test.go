@@ -1,6 +1,8 @@
 package service
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -288,6 +290,142 @@ func TestStopRecording_NotFound(t *testing.T) {
 	err := svc.StopRecording(999)
 	if err == nil {
 		t.Error("expected error for non-existent recording")
+	}
+}
+
+func TestStopRecording_UsesWatcherCompletion(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	rec := &model.Recording{
+		CameraID:  1,
+		FilePath:  filepath.Join(t.TempDir(), "missing.mp4"),
+		StartTime: time.Now(),
+		Status:    model.RecordingStatusRecording,
+		Format:    model.FormatMP4,
+	}
+	if err := db.Create(rec).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestRecorderProcessHelper", "--")
+	cmd.Env = append(os.Environ(), "CAMERAIO_RECORDER_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		cancel()
+		t.Fatalf("start helper process: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	})
+
+	task := &recordTask{
+		recording: rec,
+		cmd:       cmd,
+		cancel:    cancel,
+		stderr:    &bytes.Buffer{},
+		done:      make(chan struct{}),
+	}
+	svc := NewRecorderService(db, &pkg.Config{})
+	svc.tasks[rec.ID] = task
+	go svc.watchTask(rec.ID, task)
+
+	started := time.Now()
+	if err := svc.StopRecording(rec.ID); err != nil {
+		t.Fatalf("StopRecording returned error: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= 2*time.Second {
+		t.Fatalf("first StopRecording took %v, want less than 2s", elapsed)
+	}
+
+	select {
+	case <-task.done:
+	default:
+		t.Fatal("StopRecording returned before the watcher observed process completion")
+	}
+
+	var updated model.Recording
+	if err := db.First(&updated, rec.ID).Error; err != nil {
+		t.Fatalf("reload recording: %v", err)
+	}
+	if updated.Status != model.RecordingStatusCompleted {
+		t.Fatalf("recording status = %q, want %q", updated.Status, model.RecordingStatusCompleted)
+	}
+}
+
+func TestRecorderProcessHelper(t *testing.T) {
+	if os.Getenv("CAMERAIO_RECORDER_HELPER") != "1" {
+		return
+	}
+	for {
+		time.Sleep(time.Second)
+	}
+}
+
+func TestRecorderService_ShutdownUsesWatcherCompletion(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	rec := &model.Recording{
+		CameraID:  1,
+		FilePath:  filepath.Join(t.TempDir(), "shutdown.mp4"),
+		StartTime: time.Now(),
+		Status:    model.RecordingStatusRecording,
+		Format:    model.FormatMP4,
+	}
+	if err := db.Create(rec).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestRecorderProcessHelper", "--")
+	cmd.Env = append(os.Environ(), "CAMERAIO_RECORDER_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		cancel()
+		t.Fatalf("start helper process: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	})
+
+	task := &recordTask{
+		recording: rec,
+		cmd:       cmd,
+		cancel:    cancel,
+		stderr:    &bytes.Buffer{},
+		done:      make(chan struct{}),
+	}
+	svc := NewRecorderService(db, &pkg.Config{})
+	svc.tasks[rec.ID] = task
+	go svc.watchTask(rec.ID, task)
+
+	returned := make(chan struct{})
+	go func() {
+		svc.Shutdown()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not return after the watcher observed process completion")
+	}
+
+	select {
+	case <-task.done:
+	default:
+		t.Fatal("Shutdown returned before watchTask completed cmd.Wait")
+	}
+	svc.mu.Lock()
+	_, active := svc.tasks[rec.ID]
+	svc.mu.Unlock()
+	if active {
+		t.Fatal("Shutdown left the recording task active")
 	}
 }
 

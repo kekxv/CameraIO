@@ -39,6 +39,7 @@ type recordTask struct {
 	cmd          *exec.Cmd
 	cancel       context.CancelFunc
 	stderr       *bytes.Buffer // 捕获 FFmpeg 错误输出
+	done         chan struct{} // 仅由 watchTask 在 cmd.Wait 返回后关闭
 	forceStopped bool          // 是否由内部 watchdog 强制停止（到期）
 	// GB28181 录像：NALU 订阅
 	isGB28181 bool
@@ -88,6 +89,11 @@ func (s *RecorderService) sweepDeadProcesses() {
 	var dead []*recordTask
 	for _, t := range s.tasks {
 		if !isProcessAlive(t.cmd) {
+			select {
+			case <-t.done:
+			default:
+				continue
+			}
 			dead = append(dead, t)
 		}
 	}
@@ -95,10 +101,15 @@ func (s *RecorderService) sweepDeadProcesses() {
 
 	for _, t := range dead {
 		s.mu.Lock()
-		if _, ok := s.tasks[t.recording.ID]; ok {
+		current, ok := s.tasks[t.recording.ID]
+		claimed := ok && current == t
+		if claimed {
 			delete(s.tasks, t.recording.ID)
 		}
 		s.mu.Unlock()
+		if !claimed {
+			continue
+		}
 		s.finalizeRecording(t.recording.ID, t)
 		log.Printf("[recorder] sweep: recording %d ffmpeg not alive, finalized", t.recording.ID)
 	}
@@ -128,24 +139,16 @@ func isProcessAlive(cmd *exec.Cmd) bool {
 func (s *RecorderService) Shutdown() {
 	s.cancel()
 	s.mu.Lock()
-	tasks := make([]*recordTask, 0, len(s.tasks))
-	for _, t := range s.tasks {
-		tasks = append(tasks, t)
+	recordingIDs := make([]uint, 0, len(s.tasks))
+	for recordingID := range s.tasks {
+		recordingIDs = append(recordingIDs, recordingID)
 	}
 	s.mu.Unlock()
 
-	for _, t := range tasks {
-		if t.isGB28181 {
-			if t.unsub != nil {
-				t.unsub()
-			}
-			if t.stdin != nil {
-				_ = t.stdin.Close()
-			}
+	for _, recordingID := range recordingIDs {
+		if err := s.StopRecording(recordingID); err != nil {
+			log.Printf("[recorder] shutdown recording %d: %v", recordingID, err)
 		}
-		t.cancel()
-		t.cmd.Wait()
-		s.finalizeRecording(t.recording.ID, t)
 	}
 }
 
@@ -269,6 +272,7 @@ func (s *RecorderService) startFFmpegRecording(recording *model.Recording, args 
 		cmd:       cmd,
 		cancel:    cancel,
 		stderr:    &stderrBuf,
+		done:      make(chan struct{}),
 	}, nil
 }
 
@@ -341,6 +345,7 @@ func (s *RecorderService) startGB28181Recording(recording *model.Recording, cam 
 		cmd:       cmd,
 		cancel:    cancel,
 		stderr:    &stderrBuf,
+		done:      make(chan struct{}),
 		isGB28181: true,
 		naluCh:    naluCh,
 		unsub:     unsub,
@@ -517,23 +522,19 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 		task.cancel()
 	}
 
-	// 等待 FFmpeg 退出，但加超时避免阻塞（部分设备/编码下进程退出慢）
-	if task.cmd.Process != nil {
-		task.cmd.Process.Signal(os.Interrupt)
-	}
-	waitDone := make(chan struct{})
-	go func() {
-		task.cmd.Wait()
-		close(waitDone)
-	}()
+	// watchTask 是 cmd.Wait 的唯一调用方；停止请求只等待它发布完成信号。
 	select {
-	case <-waitDone:
-	case <-time.After(10 * time.Second):
+	case <-task.done:
+	case <-time.After(5 * time.Second):
 		// 超时仍没退出，强制杀死
 		if task.cmd.Process != nil {
-			task.cmd.Process.Kill()
+			_ = task.cmd.Process.Kill()
 		}
-		<-waitDone
+		select {
+		case <-task.done:
+		case <-time.After(2 * time.Second):
+			return fmt.Errorf("stop ffmpeg: process did not exit after cancellation")
+		}
 	}
 
 	// 获取文件大小
@@ -632,6 +633,7 @@ func (s *RecorderService) GetActiveRecordings() ([]model.Recording, error) {
 func (s *RecorderService) watchTask(recordingID uint, task *recordTask) {
 	log.Printf("[recorder] watchTask started for recording %d", recordingID)
 	err := task.cmd.Wait()
+	close(task.done)
 	log.Printf("[recorder] watchTask: recording %d ffmpeg exited, wait returned: %v", recordingID, err)
 	s.mu.Lock()
 	_, stillActive := s.tasks[recordingID]
@@ -770,16 +772,14 @@ func (s *RecorderService) DeleteRecording(id uint) error {
 		return err
 	}
 
-	// 如果正在录制，先停止
+	// 如果正在录制，复用统一停止流程；watchTask 仍是 cmd.Wait 的唯一调用方。
 	s.mu.Lock()
-	task, isActive := s.tasks[id]
-	if isActive {
-		delete(s.tasks, id)
-	}
+	_, isActive := s.tasks[id]
 	s.mu.Unlock()
 	if isActive {
-		task.cancel()
-		_ = task.cmd.Wait()
+		if err := s.StopRecording(id); err != nil {
+			return err
+		}
 	}
 
 	// 删除视频文件（忽略不存在）

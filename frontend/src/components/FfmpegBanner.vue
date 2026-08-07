@@ -39,7 +39,7 @@
 
     <!-- 错误 -->
     <div v-else-if="status.state === 'error'" class="bg-red-50 border-b border-red-200 px-4 py-2.5 flex items-center gap-3">
-      <span class="text-red-500 text-base flex-shrink-0">⚠️</span>
+      <AppIcon name="warning" class="w-4 h-4 text-red-500 flex-shrink-0" />
       <span class="text-sm text-red-700">FFmpeg 不可用：{{ status.error }}。可手动安装 FFmpeg 或设置 <code class="font-mono text-xs bg-red-100 px-1 rounded">CAMERAIO_FFMPEG_PATH</code> 环境变量。</span>
     </div>
   </div>
@@ -48,6 +48,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getFFmpegStatus } from '../api'
+import AppIcon from './AppIcon.vue'
 
 const status = ref(null)
 let timer = null
