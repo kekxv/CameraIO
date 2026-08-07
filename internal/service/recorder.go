@@ -31,6 +31,7 @@ type RecorderService struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	streams *StreamService // 用于 GB28181 录像（从 NALU 流录制）
+	events  *EventBus
 }
 
 type recordTask struct {
@@ -62,6 +63,17 @@ func NewRecorderService(db *gorm.DB, cfg *pkg.Config) *RecorderService {
 // SetStreamService 注入流服务（用于 GB28181 录像）。
 func (s *RecorderService) SetStreamService(st *StreamService) {
 	s.streams = st
+}
+
+// SetEventBus 注入事件总线，用于推送录像状态变更。
+func (s *RecorderService) SetEventBus(events *EventBus) {
+	s.events = events
+}
+
+func (s *RecorderService) publishRecordingStatus(recordingID, cameraID uint, status string) {
+	if s.events != nil {
+		s.events.PublishRecordingStatus(recordingID, cameraID, status)
+	}
 }
 
 // StartSweep 启动周期清扫：检测活跃录像的 FFmpeg 进程是否存活，
@@ -262,6 +274,7 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	s.mu.Lock()
 	s.tasks[recording.ID] = task
 	s.mu.Unlock()
+	s.publishRecordingStatus(recording.ID, recording.CameraID, model.RecordingStatusRecording)
 
 	// 录像器内部 watchdog：达到最大时长强制停止（不依赖调度器）
 	if in.MaxDuration > 0 {
@@ -519,12 +532,15 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 		if info, err := os.Stat(rec.FilePath); err == nil {
 			fileSize = info.Size()
 		}
-		s.db.Model(&rec).Updates(map[string]any{
+		if err := s.db.Model(&rec).Updates(map[string]any{
 			"end_time":  now,
 			"file_size": fileSize,
 			"duration":  duration,
 			"status":    model.RecordingStatusCompleted,
-		})
+		}).Error; err != nil {
+			return fmt.Errorf("complete recording: %w", err)
+		}
+		s.publishRecordingStatus(rec.ID, rec.CameraID, model.RecordingStatusCompleted)
 		return nil
 	}
 
@@ -561,12 +577,15 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 	now := time.Now()
 	duration := int(now.Sub(task.recording.StartTime).Seconds())
 
-	s.db.Model(task.recording).Updates(map[string]any{
+	if err := s.db.Model(task.recording).Updates(map[string]any{
 		"end_time":  now,
 		"file_size": fileSize,
 		"duration":  duration,
 		"status":    model.RecordingStatusCompleted,
-	})
+	}).Error; err != nil {
+		return fmt.Errorf("complete recording: %w", err)
+	}
+	s.publishRecordingStatus(task.recording.ID, task.recording.CameraID, model.RecordingStatusCompleted)
 
 	return nil
 }
@@ -700,6 +719,7 @@ func (s *RecorderService) finalizeRecording(recordingID uint, task *recordTask) 
 			log.Printf("[recorder] recording %d finalize to completed FAILED: %v", recordingID, err)
 		} else {
 			log.Printf("[recorder] recording %d finalized as completed (%d bytes)", recordingID, fileSize)
+			s.publishRecordingStatus(recordingID, task.recording.CameraID, model.RecordingStatusCompleted)
 		}
 	} else {
 		// 无文件 → failed
@@ -711,6 +731,7 @@ func (s *RecorderService) finalizeRecording(recordingID uint, task *recordTask) 
 			log.Printf("[recorder] recording %d finalize to failed FAILED: %v", recordingID, err)
 		} else {
 			log.Printf("[recorder] recording %d finalized as failed (no valid file)", recordingID)
+			s.publishRecordingStatus(recordingID, task.recording.CameraID, model.RecordingStatusFailed)
 		}
 	}
 }

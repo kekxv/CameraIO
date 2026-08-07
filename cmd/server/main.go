@@ -53,6 +53,7 @@ func main() {
 	recorderSvc := service.NewRecorderService(db, cfg)
 	recorderSvc.SetStreamService(streamSvc)
 	eventBus := service.NewEventBus()
+	recorderSvc.SetEventBus(eventBus)
 	monitor := service.NewSystemMonitor(db, eventBus, onvifSvc)
 	gb28181Svc := service.NewGB28181Service(cfg, db, eventBus, streamSvc)
 	streamSvc.SetGB28181(gb28181Svc)
@@ -138,4 +139,3 @@ func webUIURL(addr string) string {
 	}
 	return "http://" + host
 }
-

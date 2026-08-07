@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -290,6 +291,61 @@ func TestStopRecording_NotFound(t *testing.T) {
 	err := svc.StopRecording(999)
 	if err == nil {
 		t.Error("expected error for non-existent recording")
+	}
+}
+
+func TestStopRecording_PublishesCompletedStatus(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	rec := &model.Recording{
+		CameraID:  42,
+		FilePath:  filepath.Join(t.TempDir(), "recording.mp4"),
+		StartTime: time.Now(),
+		Status:    model.RecordingStatusRecording,
+		Format:    model.FormatMP4,
+	}
+	if err := db.Create(rec).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+
+	bus := NewEventBus()
+	client := bus.NewClient("recording-status-test")
+	svc := NewRecorderService(db, &pkg.Config{})
+	svc.SetEventBus(bus)
+	svc.tasks[rec.ID] = &recordTask{
+		recording: rec,
+		cmd:       &exec.Cmd{},
+		cancel:    func() {},
+		stderr:    &bytes.Buffer{},
+		done:      make(chan struct{}),
+	}
+
+	if err := svc.StopRecording(rec.ID); err != nil {
+		t.Fatalf("StopRecording: %v", err)
+	}
+
+	select {
+	case raw := <-client.Send:
+		var event struct {
+			Type string `json:"type"`
+			Data struct {
+				RecordingID uint   `json:"recording_id"`
+				CameraID    uint   `json:"camera_id"`
+				Status      string `json:"status"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &event); err != nil {
+			t.Fatalf("decode event: %v", err)
+		}
+		if event.Type != EventRecordingStatus {
+			t.Fatalf("event type = %q, want %q", event.Type, EventRecordingStatus)
+		}
+		if event.Data.RecordingID != rec.ID || event.Data.CameraID != rec.CameraID || event.Data.Status != model.RecordingStatusCompleted {
+			t.Fatalf("event data = %+v, want recording=%d camera=%d status=%q", event.Data, rec.ID, rec.CameraID, model.RecordingStatusCompleted)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("StopRecording did not publish a recording status event")
 	}
 }
 
