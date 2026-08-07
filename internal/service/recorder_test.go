@@ -429,6 +429,54 @@ func TestRecorderService_ShutdownUsesWatcherCompletion(t *testing.T) {
 	}
 }
 
+func TestSweepDeadProcesses_FinalizesExitedTaskWithoutWaitCompletion(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	rec := &model.Recording{
+		CameraID:  1,
+		FilePath:  filepath.Join(t.TempDir(), "missing.mp4"),
+		StartTime: time.Now(),
+		Status:    model.RecordingStatusRecording,
+		Format:    model.FormatMP4,
+	}
+	if err := db.Create(rec).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+
+	task := &recordTask{
+		recording: rec,
+		cmd:       &exec.Cmd{}, // 无进程句柄，代表已经确认退出的 FFmpeg
+		cancel:    func() {},
+		stderr:    &bytes.Buffer{},
+		done:      make(chan struct{}),
+	}
+	svc := NewRecorderService(db, &pkg.Config{})
+	svc.tasks[rec.ID] = task
+
+	svc.sweepDeadProcesses()
+
+	select {
+	case <-task.done:
+	default:
+		t.Fatal("sweep did not publish completion for an exited task")
+	}
+	svc.mu.Lock()
+	_, active := svc.tasks[rec.ID]
+	svc.mu.Unlock()
+	if active {
+		t.Fatal("sweep left an exited task active because cmd.Wait had not returned")
+	}
+
+	var updated model.Recording
+	if err := db.First(&updated, rec.ID).Error; err != nil {
+		t.Fatalf("reload recording: %v", err)
+	}
+	if updated.Status != model.RecordingStatusFailed {
+		t.Fatalf("recording status = %q, want %q", updated.Status, model.RecordingStatusFailed)
+	}
+}
+
 func TestDeleteRecording(t *testing.T) {
 	db, cleanup := setupRecorderTestDB(t)
 	defer cleanup()

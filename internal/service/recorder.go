@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"CameraIO/internal/model"
@@ -39,8 +38,9 @@ type recordTask struct {
 	cmd          *exec.Cmd
 	cancel       context.CancelFunc
 	stderr       *bytes.Buffer // 捕获 FFmpeg 错误输出
-	done         chan struct{} // 仅由 watchTask 在 cmd.Wait 返回后关闭
-	forceStopped bool          // 是否由内部 watchdog 强制停止（到期）
+	done         chan struct{} // FFmpeg 已确认退出，由 watcher 或 sweep 发布
+	doneOnce     sync.Once
+	forceStopped bool // 是否由内部 watchdog 强制停止（到期）
 	// GB28181 录像：NALU 订阅
 	isGB28181 bool
 	naluCh    <-chan NALU
@@ -88,12 +88,7 @@ func (s *RecorderService) sweepDeadProcesses() {
 	s.mu.Lock()
 	var dead []*recordTask
 	for _, t := range s.tasks {
-		if !isProcessAlive(t.cmd) {
-			select {
-			case <-t.done:
-			default:
-				continue
-			}
+		if processExited(t.cmd) {
 			dead = append(dead, t)
 		}
 	}
@@ -110,6 +105,7 @@ func (s *RecorderService) sweepDeadProcesses() {
 		if !claimed {
 			continue
 		}
+		t.markDone()
 		s.finalizeRecording(t.recording.ID, t)
 		log.Printf("[recorder] sweep: recording %d ffmpeg not alive, finalized", t.recording.ID)
 	}
@@ -117,21 +113,45 @@ func (s *RecorderService) sweepDeadProcesses() {
 
 // isProcessAlive 检查进程是否存活（跨平台）。
 func isProcessAlive(cmd *exec.Cmd) bool {
-	if cmd == nil || cmd.Process == nil {
-		return false
+	return !processExited(cmd)
+}
+
+func (t *recordTask) markDone() {
+	if t.done == nil {
+		return
 	}
-	if cmd.ProcessState != nil {
-		return false // Wait 已调用，进程已退出
-	}
-	err := cmd.Process.Signal(syscall.Signal(0))
-	if err == nil {
+	t.doneOnce.Do(func() {
+		close(t.done)
+	})
+}
+
+func waitForTaskExit(task *recordTask, timeout time.Duration) bool {
+	if task == nil {
 		return true
 	}
-	if err == os.ErrProcessDone {
-		return false
+	if processExited(task.cmd) {
+		task.markDone()
+		return true
 	}
-	// 平台不支持 signal 0（如 Windows）→ 通过 ProcessState 判断，假设存活
-	return true
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-task.done:
+			return true
+		case <-ticker.C:
+			if processExited(task.cmd) {
+				task.markDone()
+				return true
+			}
+		case <-timer.C:
+			return false
+		}
+	}
 }
 
 // Shutdown 停止所有正在进行的录像任务（优雅关闭时调用）。
@@ -523,16 +543,12 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 	}
 
 	// watchTask 是 cmd.Wait 的唯一调用方；停止请求只等待它发布完成信号。
-	select {
-	case <-task.done:
-	case <-time.After(5 * time.Second):
+	if !waitForTaskExit(task, 5*time.Second) {
 		// 超时仍没退出，强制杀死
 		if task.cmd.Process != nil {
 			_ = task.cmd.Process.Kill()
 		}
-		select {
-		case <-task.done:
-		case <-time.After(2 * time.Second):
+		if !waitForTaskExit(task, 2*time.Second) {
 			return fmt.Errorf("stop ffmpeg: process did not exit after cancellation")
 		}
 	}
@@ -633,7 +649,7 @@ func (s *RecorderService) GetActiveRecordings() ([]model.Recording, error) {
 func (s *RecorderService) watchTask(recordingID uint, task *recordTask) {
 	log.Printf("[recorder] watchTask started for recording %d", recordingID)
 	err := task.cmd.Wait()
-	close(task.done)
+	task.markDone()
 	log.Printf("[recorder] watchTask: recording %d ffmpeg exited, wait returned: %v", recordingID, err)
 	s.mu.Lock()
 	_, stillActive := s.tasks[recordingID]
