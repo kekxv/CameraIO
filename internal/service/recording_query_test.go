@@ -382,6 +382,49 @@ func TestResolvePlaybackPointTreatsNonPositiveDurationAsUnavailable(t *testing.T
 	}
 }
 
+// TestResolvePlaybackPointDoesNotAdvertiseNonPositiveDurationAsNext catches
+// preloading a completed successor that cannot produce a valid playback point.
+func TestResolvePlaybackPointDoesNotAdvertiseNonPositiveDurationAsNext(t *testing.T) {
+	for _, durationMS := range []int64{0, -1} {
+		t.Run(fmt.Sprintf("duration_%d", durationMS), func(t *testing.T) {
+			db, cleanup := setupRecorderTestDB(t)
+			defer cleanup()
+
+			start := queryTime(t, "2026-08-08T10:00:00Z")
+			end := start.Add(5 * time.Minute)
+			createQuerySegment(t, db, model.RecordingSegment{
+				RecordingID: 70,
+				CameraID:    1,
+				Sequence:    1,
+				StartTime:   start,
+				EndTime:     end,
+				DurationMS:  300000,
+				Status:      model.RecordingStatusCompleted,
+			})
+			createQuerySegment(t, db, model.RecordingSegment{
+				RecordingID: 71,
+				CameraID:    1,
+				Sequence:    1,
+				StartTime:   end.Add(time.Second),
+				EndTime:     end.Add(5*time.Minute + time.Second),
+				DurationMS:  durationMS,
+				Status:      model.RecordingStatusCompleted,
+			})
+
+			got, err := NewRecorderService(db, nil).ResolvePlaybackPoint(1, start.Add(time.Minute))
+			if err != nil {
+				t.Fatalf("ResolvePlaybackPoint: %v", err)
+			}
+			if got == nil {
+				t.Fatal("current playback point is nil")
+			}
+			if got.NextSegmentID != nil {
+				t.Fatalf("next segment = %d, want nil for duration %d", *got.NextSegmentID, durationMS)
+			}
+		})
+	}
+}
+
 // TestRecorderListUsesIntervalOverlap catches filtering legacy sessions only
 // by whether their start time lies inside the requested range.
 func TestRecorderListUsesIntervalOverlap(t *testing.T) {

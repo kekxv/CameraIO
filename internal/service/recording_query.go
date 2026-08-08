@@ -85,7 +85,7 @@ func (s *RecorderService) ResolvePlaybackPoint(cameraID uint, at time.Time) (*Pl
 
 	var next model.RecordingSegment
 	result = s.db.
-		Where("camera_id = ? AND status = ? AND start_time > ?", cameraID, model.RecordingStatusCompleted, stored.StartTime).
+		Where("camera_id = ? AND duration_ms > 0 AND status = ? AND start_time > ?", cameraID, model.RecordingStatusCompleted, stored.StartTime).
 		Order("start_time ASC, id ASC").
 		Limit(1).
 		Find(&next)
