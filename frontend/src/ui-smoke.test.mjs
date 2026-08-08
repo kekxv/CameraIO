@@ -13,6 +13,23 @@ test('bright design system exposes shared primitives and Chrome 72 fallbacks', (
   }
 })
 
+test('compatible flex helpers provide spacing in modern browsers and a Chrome 72 fallback', () => {
+  for (const [name, value] of [
+    ['1', '0.25rem'],
+    ['2', '0.5rem'],
+    ['3', '0.75rem'],
+    ['4', '1rem'],
+  ]) {
+    const marginRule = `.compat-flex-gap-${name} > * + * { margin-left: ${value}; }`
+    assert.ok(css.includes(marginRule), `missing default fallback ${marginRule}`)
+    assert.match(css, new RegExp(`\\.has-flex-gap \\.compat-flex-gap-${name} \\{ gap: ${value}; \\}`))
+  }
+  assert.ok(css.includes('.compat-flex-column > * + * { margin-top: 0.75rem; }'))
+  assert.match(css, /\.has-flex-gap \.compat-flex-column \{ gap: 0\.75rem; \}/)
+  const compat = readFileSync(new URL('./compat.js', import.meta.url), 'utf8')
+  assert.match(compat, /has-flex-gap/)
+})
+
 test('application shell uses a light navigation surface and an accessible mobile toggle', () => {
   const layout = readFileSync(new URL('./components/Layout.vue', import.meta.url), 'utf8')
   assert.match(layout, /app-shell/)
