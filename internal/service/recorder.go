@@ -1070,16 +1070,16 @@ func (s *RecorderService) DeleteRecording(id uint) error {
 		}
 	}
 	if rec.StorageMode == model.StorageModeSegmented {
-		if err := s.db.Transaction(func(tx *gorm.DB) error {
-			var segments []model.RecordingSegment
-			if err := tx.Where("recording_id = ?", id).Find(&segments).Error; err != nil {
-				return err
+		var segments []model.RecordingSegment
+		if err := s.db.Where("recording_id = ?", id).Find(&segments).Error; err != nil {
+			return err
+		}
+		for _, segment := range segments {
+			if err := os.Remove(segment.FilePath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("delete segment file %s: %w", segment.FilePath, err)
 			}
-			for _, segment := range segments {
-				if err := os.Remove(segment.FilePath); err != nil && !os.IsNotExist(err) {
-					return fmt.Errorf("delete segment file %s: %w", segment.FilePath, err)
-				}
-			}
+		}
+		if rec.FilePath != "" {
 			entries, err := os.ReadDir(rec.FilePath)
 			if err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("read recording session dir %s: %w", rec.FilePath, err)
@@ -1093,17 +1093,17 @@ func (s *RecorderService) DeleteRecording(id uint) error {
 					return fmt.Errorf("delete unindexed segment file %s: %w", path, err)
 				}
 			}
+			if err := os.Remove(rec.FilePath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("delete recording session dir %s: %w", rec.FilePath, err)
+			}
+		}
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Where("recording_id = ?", id).Delete(&model.RecordingSegment{}).Error; err != nil {
 				return err
 			}
 			return tx.Delete(&model.Recording{}, id).Error
 		}); err != nil {
 			return err
-		}
-		if rec.FilePath != "" {
-			if err := os.Remove(rec.FilePath); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("delete recording session dir %s: %w", rec.FilePath, err)
-			}
 		}
 		return nil
 	}

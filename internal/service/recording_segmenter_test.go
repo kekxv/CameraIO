@@ -889,6 +889,92 @@ func TestDeleteSegmentedRecordingRemovesRowsFilesAndSessionDirectory(t *testing.
 	}
 }
 
+func TestDeleteSegmentedRecordingUnexpectedResidualKeepsRowsRetryable(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+	sessionDir := t.TempDir()
+	recording := &model.Recording{
+		CameraID:    18,
+		FilePath:    sessionDir,
+		StartTime:   time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC),
+		Status:      model.RecordingStatusCompleted,
+		Format:      model.FormatMP4,
+		StorageMode: model.StorageModeSegmented,
+	}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+	indexedPath := filepath.Join(sessionDir, "20260808T120000Z.mp4")
+	if err := os.WriteFile(indexedPath, []byte("indexed segment"), 0o644); err != nil {
+		t.Fatalf("write indexed segment: %v", err)
+	}
+	segment := &model.RecordingSegment{
+		RecordingID: recording.ID,
+		CameraID:    recording.CameraID,
+		Sequence:    1,
+		FilePath:    indexedPath,
+		FileSize:    int64(len("indexed segment")),
+		StartTime:   recording.StartTime,
+		EndTime:     recording.StartTime.Add(time.Minute),
+		DurationMS:  int64(time.Minute / time.Millisecond),
+		Status:      model.RecordingStatusCompleted,
+		Format:      model.FormatMP4,
+	}
+	if err := db.Create(segment).Error; err != nil {
+		t.Fatalf("create segment: %v", err)
+	}
+	unindexedPath := filepath.Join(sessionDir, "20260808T120100Z.mp4")
+	if err := os.WriteFile(unindexedPath, []byte("unindexed segment"), 0o644); err != nil {
+		t.Fatalf("write unindexed segment: %v", err)
+	}
+	residualDir := filepath.Join(sessionDir, "unexpected")
+	if err := os.Mkdir(residualDir, 0o755); err != nil {
+		t.Fatalf("create unexpected directory: %v", err)
+	}
+	residualPath := filepath.Join(residualDir, "preserve.txt")
+	if err := os.WriteFile(residualPath, []byte("do not recursively delete"), 0o644); err != nil {
+		t.Fatalf("write unexpected residual: %v", err)
+	}
+
+	svc := NewRecorderService(db, pkg.DefaultConfig())
+	if err := svc.DeleteRecording(recording.ID); err == nil {
+		t.Fatal("DeleteRecording succeeded with an unexpected residual directory")
+	}
+	for _, path := range []string{indexedPath, unindexedPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("child MP4 was not removed before safe refusal: %s: %v", path, err)
+		}
+	}
+	if contents, err := os.ReadFile(residualPath); err != nil || string(contents) != "do not recursively delete" {
+		t.Fatalf("unexpected residual was recursively modified: contents=%q err=%v", contents, err)
+	}
+	assertSegmentRows(t, db, recording.ID, 1)
+	if _, err := svc.GetRecording(recording.ID); err != nil {
+		t.Fatalf("recording row was not preserved for retry: %v", err)
+	}
+
+	if err := os.Remove(residualPath); err != nil {
+		t.Fatalf("remove residual file: %v", err)
+	}
+	if err := os.Remove(residualDir); err != nil {
+		t.Fatalf("remove residual directory: %v", err)
+	}
+	if err := svc.DeleteRecording(recording.ID); err != nil {
+		t.Fatalf("retry DeleteRecording: %v", err)
+	}
+	assertSegmentRows(t, db, recording.ID, 0)
+	var recordingCount int64
+	if err := db.Model(&model.Recording{}).Where("id = ?", recording.ID).Count(&recordingCount).Error; err != nil {
+		t.Fatalf("count recording rows after successful retry: %v", err)
+	}
+	if recordingCount != 0 {
+		t.Fatalf("recording rows after successful retry = %d, want 0", recordingCount)
+	}
+	if _, err := os.Stat(sessionDir); !os.IsNotExist(err) {
+		t.Fatalf("session directory after successful retry: %v", err)
+	}
+}
+
 func TestCooperativeSegmentFFmpegProcessHelper(t *testing.T) {
 	if os.Getenv("CAMERAIO_COOPERATIVE_SEGMENT_HELPER") != "1" {
 		return
