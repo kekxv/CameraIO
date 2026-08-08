@@ -71,12 +71,27 @@ func startRecordingSubsystems(ctx context.Context, recorder recordingStartup, sc
 			default:
 			}
 			recorder.StartRetention()
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			recorder.StartSweep()
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			scheduler.Start()
 			return
 		}
 	}()
 	return done
+}
+
+func cancelAndWaitRecordingStartup(cancel context.CancelFunc, done <-chan struct{}) {
+	cancel()
+	<-done
 }
 
 func main() {
@@ -129,7 +144,7 @@ func main() {
 	defer stopRecordingStartup()
 
 	// 启动后台服务
-	startRecordingSubsystems(recordingStartupCtx, recorderSvc, scheduleSvc, 5*time.Second, func(err error) {
+	recordingStartupDone := startRecordingSubsystems(recordingStartupCtx, recorderSvc, scheduleSvc, 5*time.Second, func(err error) {
 		log.Printf("[recorder] startup maintenance deferred; retrying: %v", err)
 	})
 	monitor.Start()
@@ -174,7 +189,7 @@ func main() {
 	defer cancel()
 
 	// 1. 先停止后台服务（拉流/录像），让 MJPEG 等长连接请求尽快返回
-	stopRecordingStartup()
+	cancelAndWaitRecordingStartup(stopRecordingStartup, recordingStartupDone)
 	cameraSvc.Shutdown()
 	streamSvc.Shutdown()
 	scheduleSvc.Stop()

@@ -9,10 +9,12 @@ import (
 )
 
 type startupRecorderFake struct {
-	calls           *[]string
-	reconcileErr    error
-	reconcileErrors []error
-	reconcileCalls  int
+	calls                 *[]string
+	reconcileErr          error
+	reconcileErrors       []error
+	reconcileCalls        int
+	startRetentionEntered chan struct{}
+	startRetentionRelease chan struct{}
 }
 
 func (f *startupRecorderFake) ReconcileSegments() error {
@@ -36,6 +38,12 @@ func (f *startupRecorderFake) RunRetentionOnce() error {
 
 func (f *startupRecorderFake) StartRetention() {
 	*f.calls = append(*f.calls, "start-retention")
+	if f.startRetentionEntered != nil {
+		close(f.startRetentionEntered)
+	}
+	if f.startRetentionRelease != nil {
+		<-f.startRetentionRelease
+	}
 }
 
 func (f *startupRecorderFake) StartSweep() {
@@ -94,5 +102,62 @@ func TestStartRecordingSubsystemsRetriesReconciliationBeforeStartingScheduler(t 
 	want := []string{"reconcile-segments", "reconcile-segments", "reconcile-legacy", "retention-once", "start-retention", "start-sweep", "start-scheduler"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("startup calls = %v, want %v", calls, want)
+	}
+}
+
+func TestRecordingStartupShutdownWaitsForCoordinatorAndPreventsLaterStarts(t *testing.T) {
+	var calls []string
+	retentionEntered := make(chan struct{})
+	retentionRelease := make(chan struct{})
+	recorder := &startupRecorderFake{
+		calls:                 &calls,
+		startRetentionEntered: retentionEntered,
+		startRetentionRelease: retentionRelease,
+	}
+	scheduler := &startupSchedulerFake{calls: &calls}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := startRecordingSubsystems(ctx, recorder, scheduler, time.Millisecond, nil)
+
+	select {
+	case <-retentionEntered:
+	case <-time.After(time.Second):
+		t.Fatal("recording startup did not reach retention start")
+	}
+
+	cancelCalled := make(chan struct{})
+	shutdownDone := make(chan struct{})
+	go func() {
+		cancelAndWaitRecordingStartup(func() {
+			cancel()
+			close(cancelCalled)
+		}, done)
+		calls = append(calls, "stop-scheduler", "stop-recorder")
+		close(shutdownDone)
+	}()
+
+	<-cancelCalled
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown returned while recording startup was still running")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(retentionRelease)
+	select {
+	case <-shutdownDone:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not return after recording startup completed")
+	}
+
+	want := []string{
+		"reconcile-segments",
+		"reconcile-legacy",
+		"retention-once",
+		"start-retention",
+		"stop-scheduler",
+		"stop-recorder",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("shutdown calls = %v, want %v", calls, want)
 	}
 }
