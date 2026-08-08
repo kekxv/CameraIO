@@ -60,3 +60,10 @@ claim is made by this change.
 - The Bash command-contract test now executes these gates with temporary fake
   FFmpeg/ffprobe binaries and a temporary SQLite fixture, including separate-
   session and in-session-gap continuity cases.
+
+## Review follow-up: help contract correction
+
+Both target-host help screens now show the exact enforced resource-evidence
+header: `timestamp_unix,host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent`.
+The Bash command-contract test asserts this help text so it cannot drift back to
+the obsolete three-column example.

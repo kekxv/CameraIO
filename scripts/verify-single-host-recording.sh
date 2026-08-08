@@ -19,7 +19,7 @@ Options:
   --skip-build             Skip Go and frontend gates (only for a focused rerun).
   --latency-baseline FILE  One millisecond latency sample per line; at least 30 lines.
   --latency-recording FILE One millisecond latency sample per line; at least 30 lines.
-  --resource-samples FILE  CSV: host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent.
+  --resource-samples FILE  CSV: timestamp_unix,host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent.
   -h, --help               Show this help.
 EOF
 }

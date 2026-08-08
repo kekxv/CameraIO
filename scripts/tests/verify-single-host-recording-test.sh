@@ -14,6 +14,7 @@ help=$("$script" --help)
 [[ "$help" == *"--database"* ]]
 [[ "$help" == *"--skip-build"* ]]
 [[ "$help" == *"--smoke"* ]]
+[[ "$help" == *"timestamp_unix,host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent"* ]]
 
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT

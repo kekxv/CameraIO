@@ -28,7 +28,7 @@ does not modify CameraIO configuration or live code.
 -SkipBuild             Skip Go/frontend gates for a focused rerun.
 -LatencyBaseline FILE  One millisecond latency sample per line; >=30 lines.
 -LatencyRecording FILE One millisecond latency sample per line; >=30 lines.
--ResourceSamples FILE  CSV: host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent.
+-ResourceSamples FILE  CSV: timestamp_unix,host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent.
 '@
   exit 0
 }
