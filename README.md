@@ -139,8 +139,10 @@ scripts/verify-single-host-recording.sh \
 实体时钟和 CameraIO 预览：先收集未录像的 30 次样本，再在连续分段录像时收集
 30 次。每个样本必须小于 1000 ms，录像期间 p95 相对基线增加不得超过 100 ms。
 
-`resource-samples.csv` 的表头为
-`host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent`。在全部必要摄像头
+`resource-samples.csv` 的表头必须为
+`timestamp_unix,host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent`，其中
+`timestamp_unix` 为 Unix 秒。至少记录两个按时间顺序的样本，首尾必须相隔 30 分钟或
+更多。在全部必要摄像头
 持续录像且打开正常数量预览格的情况下，完成 30 分钟正常自助服务流程；记录定期
 样本并确认自助服务没有新增超时/错误、录制 FFmpeg 处于低于普通优先级、每流录像
 CPU 小于 5%、主机持续 CPU 小于 70%、可用磁盘大于 15%。
