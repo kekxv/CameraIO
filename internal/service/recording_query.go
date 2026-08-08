@@ -67,7 +67,7 @@ func (s *RecorderService) ResolvePlaybackPoint(cameraID uint, at time.Time) (*Pl
 	at = at.UTC()
 	var stored model.RecordingSegment
 	result := s.db.
-		Where("camera_id = ? AND start_time <= ? AND end_time > ? AND status = ?", cameraID, at, at, model.RecordingStatusCompleted).
+		Where("camera_id = ? AND start_time <= ? AND end_time > ? AND duration_ms > 0 AND status = ?", cameraID, at, at, model.RecordingStatusCompleted).
 		Order("start_time DESC, id DESC").
 		Limit(1).
 		Find(&stored)
@@ -97,7 +97,7 @@ func (s *RecorderService) ResolvePlaybackPoint(cameraID uint, at time.Time) (*Pl
 	}
 
 	gap := next.StartTime.Sub(stored.EndTime)
-	if gap >= 0 && gap <= 2*time.Second {
+	if gap >= -2*time.Second && gap <= 2*time.Second {
 		nextID := next.ID
 		point.NextSegmentID = &nextID
 	}

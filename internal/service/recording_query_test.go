@@ -278,14 +278,16 @@ func TestResolvePlaybackPointNormalizesQueryTimeToUTC(t *testing.T) {
 	}
 }
 
-// TestResolvePlaybackPointLinksOnlyAcrossAtMostTwoSecondGaps catches silently
-// skipping a real recording gap when choosing the next completed segment.
-func TestResolvePlaybackPointLinksOnlyAcrossAtMostTwoSecondGaps(t *testing.T) {
+// TestResolvePlaybackPointLinksOnlyWithinTwoSecondBoundaryTolerance catches
+// rejecting a small overlap or silently skipping a real boundary discontinuity.
+func TestResolvePlaybackPointLinksOnlyWithinTwoSecondBoundaryTolerance(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		gap      time.Duration
 		wantNext bool
 	}{
+		{name: "two second overlap", gap: -2 * time.Second, wantNext: true},
+		{name: "over two second overlap", gap: -2001 * time.Millisecond, wantNext: false},
 		{name: "two seconds", gap: 2 * time.Second, wantNext: true},
 		{name: "over two seconds", gap: 2001 * time.Millisecond, wantNext: false},
 	} {
@@ -345,6 +347,36 @@ func TestResolvePlaybackPointLinksOnlyAcrossAtMostTwoSecondGaps(t *testing.T) {
 				}
 			} else if got.NextSegmentID != nil {
 				t.Fatalf("next segment = %d, want nil across recording gap", *got.NextSegmentID)
+			}
+		})
+	}
+}
+
+// TestResolvePlaybackPointTreatsNonPositiveDurationAsUnavailable catches
+// returning an offset for a segment whose valid offset interval is empty.
+func TestResolvePlaybackPointTreatsNonPositiveDurationAsUnavailable(t *testing.T) {
+	for _, durationMS := range []int64{0, -1} {
+		t.Run(fmt.Sprintf("duration_%d", durationMS), func(t *testing.T) {
+			db, cleanup := setupRecorderTestDB(t)
+			defer cleanup()
+
+			start := queryTime(t, "2026-08-08T10:00:00Z")
+			createQuerySegment(t, db, model.RecordingSegment{
+				RecordingID: 60,
+				CameraID:    1,
+				Sequence:    1,
+				StartTime:   start,
+				EndTime:     start.Add(time.Minute),
+				DurationMS:  durationMS,
+				Status:      model.RecordingStatusCompleted,
+			})
+
+			got, err := NewRecorderService(db, nil).ResolvePlaybackPoint(1, start.Add(30*time.Second))
+			if err != nil {
+				t.Fatalf("ResolvePlaybackPoint: %v", err)
+			}
+			if got != nil {
+				t.Fatalf("playback point = %+v, want nil for duration %d", got, durationMS)
 			}
 		})
 	}
