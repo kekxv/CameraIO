@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"reflect"
-	"runtime"
 	"testing"
 	"time"
 )
@@ -56,20 +55,6 @@ type startupSchedulerFake struct {
 
 func (f *startupSchedulerFake) Start() {
 	*f.calls = append(*f.calls, "start-scheduler")
-}
-
-func waitForRecordingStartupStopRequest(t *testing.T, startup *recordingStartupCoordinator) {
-	t.Helper()
-	deadline := time.NewTimer(time.Second)
-	defer deadline.Stop()
-	for !startup.stopRequested.Load() {
-		select {
-		case <-deadline.C:
-			t.Fatal("recording startup cancellation was not requested")
-		default:
-			runtime.Gosched()
-		}
-	}
 }
 
 func TestStartRecordingSubsystemsReconcilesBeforeScheduler(t *testing.T) {
@@ -126,6 +111,8 @@ func TestRecordingStartupShutdownWaitsForCoordinatorAndPreventsLaterStarts(t *te
 	}
 	scheduler := &startupSchedulerFake{calls: &calls}
 	startup := startRecordingSubsystems(recorder, scheduler, time.Millisecond, nil)
+	cancelWaiting := make(chan struct{})
+	startup.beforeCancelLock = func() { close(cancelWaiting) }
 
 	select {
 	case <-retentionEntered:
@@ -143,7 +130,7 @@ func TestRecordingStartupShutdownWaitsForCoordinatorAndPreventsLaterStarts(t *te
 	}()
 
 	<-shutdownStarted
-	waitForRecordingStartupStopRequest(t, startup)
+	<-cancelWaiting
 	select {
 	case <-shutdownDone:
 		t.Fatal("shutdown returned while recording startup was still running")
@@ -172,35 +159,46 @@ func TestRecordingStartupShutdownWaitsForCoordinatorAndPreventsLaterStarts(t *te
 
 func TestRecordingStartupCoordinatorSerializesCancellationWithActivation(t *testing.T) {
 	startup := newRecordingStartupCoordinator()
-	activationEntered := make(chan struct{})
-	activationRelease := make(chan struct{})
+	activationChecked := make(chan struct{})
+	allowStartCallback := make(chan struct{})
+	startup.afterActivationCheck = func() {
+		close(activationChecked)
+		<-allowStartCallback
+	}
+	cancelWaiting := make(chan struct{})
+	startup.beforeCancelLock = func() { close(cancelWaiting) }
+	startCallbackCalled := make(chan struct{})
 	activationDone := make(chan struct{})
 	go func() {
 		startup.activate(func() {
-			close(activationEntered)
-			<-activationRelease
+			close(startCallbackCalled)
 		})
 		close(activationDone)
 	}()
 
-	<-activationEntered
+	<-activationChecked
 	cancelDone := make(chan struct{})
 	go func() {
 		startup.cancel()
 		close(cancelDone)
 	}()
-	waitForRecordingStartupStopRequest(t, startup)
+	<-cancelWaiting
 	select {
 	case <-cancelDone:
-		t.Fatal("cancellation interleaved between activation authorization and start completion")
+		t.Fatal("cancellation completed between activation check and start callback")
+	default:
+	}
+	select {
+	case <-startCallbackCalled:
+		t.Fatal("start callback ran before the controlled interleaving was released")
 	default:
 	}
 
-	close(activationRelease)
+	close(allowStartCallback)
 	select {
 	case <-activationDone:
 	case <-time.After(time.Second):
-		t.Fatal("authorized activation did not complete")
+		t.Fatal("authorized start callback did not complete")
 	}
 	select {
 	case <-cancelDone:

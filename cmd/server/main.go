@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,8 +33,11 @@ type recordingStartupCoordinator struct {
 	ctx           context.Context
 	cancelContext context.CancelFunc
 	done          chan struct{}
-	activationMu  sync.Mutex
-	stopRequested atomic.Bool
+	activationMu  sync.RWMutex
+	stopRequested bool
+
+	afterActivationCheck func()
+	beforeCancelLock     func()
 }
 
 func newRecordingStartupCoordinator() *recordingStartupCoordinator {
@@ -48,20 +50,26 @@ func newRecordingStartupCoordinator() *recordingStartupCoordinator {
 }
 
 func (c *recordingStartupCoordinator) activate(start func()) bool {
-	c.activationMu.Lock()
-	defer c.activationMu.Unlock()
-	if c.stopRequested.Load() || c.ctx.Err() != nil {
+	c.activationMu.RLock()
+	defer c.activationMu.RUnlock()
+	if c.stopRequested || c.ctx.Err() != nil {
 		return false
+	}
+	if c.afterActivationCheck != nil {
+		c.afterActivationCheck()
 	}
 	start()
 	return true
 }
 
 func (c *recordingStartupCoordinator) cancel() {
-	c.stopRequested.Store(true)
+	if c.beforeCancelLock != nil {
+		c.beforeCancelLock()
+	}
 	c.activationMu.Lock()
+	defer c.activationMu.Unlock()
+	c.stopRequested = true
 	c.cancelContext()
-	c.activationMu.Unlock()
 }
 
 func prepareRecordingSubsystems(recorder recordingStartup) error {
