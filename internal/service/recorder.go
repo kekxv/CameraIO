@@ -32,6 +32,9 @@ type RecorderService struct {
 	cancel  context.CancelFunc
 	streams *StreamService // 用于 GB28181 录像（从 NALU 流录制）
 	events  *EventBus
+
+	segmentCommand segmentCommandFactory
+	probeAAC       func(context.Context, string) (bool, error)
 }
 
 type recordTask struct {
@@ -42,6 +45,8 @@ type recordTask struct {
 	done         chan struct{} // FFmpeg 已确认退出，由 watcher 或 sweep 发布
 	doneOnce     sync.Once
 	forceStopped bool // 是否由内部 watchdog 强制停止（到期）
+	segmenter    *segmentSupervisor
+	stopping     bool
 	// GB28181 录像：NALU 订阅
 	isGB28181 bool
 	naluCh    <-chan NALU
@@ -100,6 +105,17 @@ func (s *RecorderService) sweepDeadProcesses() {
 	s.mu.Lock()
 	var dead []*recordTask
 	for _, t := range s.tasks {
+		if t.stopping {
+			continue
+		}
+		if t.segmenter != nil {
+			select {
+			case <-t.segmenter.done:
+				dead = append(dead, t)
+			default:
+			}
+			continue
+		}
 		if processExited(t.cmd) {
 			dead = append(dead, t)
 		}
@@ -115,6 +131,13 @@ func (s *RecorderService) sweepDeadProcesses() {
 		}
 		s.mu.Unlock()
 		if !claimed {
+			continue
+		}
+		if t.segmenter != nil {
+			if err := t.segmenter.scanCompleted(true); err != nil {
+				log.Printf("[recorder] sweep recording %d final segment scan: %v", t.recording.ID, err)
+			}
+			s.finalizeSegmentedRecording(t.recording.ID, t.recording.CameraID)
 			continue
 		}
 		t.markDone()
@@ -222,8 +245,14 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	default:
 		return nil, fmt.Errorf("unsupported format: %s (use mp4, webm, or ts)", format)
 	}
+	if format == model.FormatWebM {
+		return nil, errors.New("webm recordings are not supported by the resource-safe recorder; use mp4")
+	}
+	if in.Bitrate > 0 {
+		return nil, errors.New("bitrate must be 0 for resource-safe stream-copy recording")
+	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	fileName := fmt.Sprintf("%d_%s.%s", cam.ID, now.Format("20060102_150405"), format)
 	if in.CustomName != "" {
 		fileName = fmt.Sprintf("%d_%s_%s.%s", cam.ID, now.Format("20060102_150405"), in.CustomName, format)
@@ -251,6 +280,11 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 		Format:      format,
 		WithAudio:   in.WithAudio,
 	}
+	segmented := format == model.FormatMP4 && cam.AccessProtocol != model.ProtocolGB28181
+	if segmented {
+		recording.FilePath = dir
+		recording.StorageMode = model.StorageModeSegmented
+	}
 	if err := s.db.Create(recording).Error; err != nil {
 		return nil, err
 	}
@@ -258,7 +292,9 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	var task *recordTask
 	var err error
 
-	if cam.AccessProtocol == model.ProtocolGB28181 {
+	if segmented {
+		task, err = s.startSegmentedRecording(recording, cam)
+	} else if cam.AccessProtocol == model.ProtocolGB28181 {
 		// GB28181：从 Stream 的 NALU 流录制（与预览同一条链路）
 		task, err = s.startGB28181Recording(recording, cam, format, in.WithAudio, in.Bitrate)
 	} else {
@@ -281,10 +317,65 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 		go s.maxDurationWatchdog(recording.ID, task, in.MaxDuration)
 	}
 
-	// 后台等待 FFmpeg 退出（异常中断时更新状态）
-	go s.watchTask(recording.ID, task)
+	// 后台等待 FFmpeg 退出（异常中断时更新状态）。分段录像的 supervisor
+	// 是 cmd.Wait 的唯一所有者，旧任务继续由 watchTask 所有。
+	if task.segmenter != nil {
+		go s.watchSegmentTask(recording.ID, task)
+	} else {
+		go s.watchTask(recording.ID, task)
+	}
 
 	return recording, nil
+}
+
+func (s *RecorderService) startSegmentedRecording(recording *model.Recording, cam model.Camera) (*recordTask, error) {
+	sessionDir := filepath.Join(s.cfg.RecordingsDir, strconv.FormatUint(uint64(cam.ID), 10), strconv.FormatUint(uint64(recording.ID), 10))
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create recording session dir: %w", err)
+	}
+	recording.FilePath = sessionDir
+	if err := s.db.Model(recording).Update("file_path", sessionDir).Error; err != nil {
+		return nil, fmt.Errorf("store recording session path: %w", err)
+	}
+
+	withAAC := false
+	if recording.WithAudio {
+		probe := s.probeAAC
+		if probe == nil {
+			probe = probeRTSPAAC
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		var err error
+		withAAC, err = probe(ctx, cam.RTSPUrl)
+		cancel()
+		if err != nil {
+			log.Printf("[recorder] camera %d AAC probe failed; recording video only: %v", cam.ID, err)
+			withAAC = false
+		}
+	}
+	segmentSeconds := s.cfg.RecordingSegmentSeconds
+	if segmentSeconds <= 0 {
+		segmentSeconds = 300
+	}
+	outputPattern := filepath.Join(sessionDir, "%Y%m%dT%H%M%SZ.mp4")
+	supervisor := &segmentSupervisor{
+		db:            s.db,
+		recording:     recording,
+		sessionDir:    sessionDir,
+		args:          buildSegmentRecordingArgs(cam.RTSPUrl, outputPattern, segmentSeconds, withAAC),
+		newCommand:    s.segmentCommand,
+		probeDuration: nil,
+	}
+	if err := supervisor.start(); err != nil {
+		return nil, err
+	}
+	return &recordTask{
+		recording: recording,
+		cmd:       supervisor.cmd,
+		stderr:    &supervisor.stderr,
+		done:      supervisor.done,
+		segmenter: supervisor,
+	}, nil
 }
 
 // startFFmpegRecording 启动 FFmpeg 直接拉流录制（RTSP/本地）。
@@ -430,6 +521,12 @@ func (s *RecorderService) maxDurationWatchdog(recordingID uint, task *recordTask
 		return // 录像已通过其他方式停止
 	}
 	log.Printf("[recorder] recording %d reached max duration (%ds), force stopping", recordingID, maxSeconds)
+	if task.segmenter != nil {
+		if err := s.StopRecording(recordingID); err != nil {
+			log.Printf("[recorder] stop segmented recording %d at max duration: %v", recordingID, err)
+		}
+		return
+	}
 	task.cancel() // 取消 context → CommandContext 杀掉 FFmpeg
 }
 
@@ -512,7 +609,11 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 	s.mu.Lock()
 	task, ok := s.tasks[recordingID]
 	if ok {
-		delete(s.tasks, recordingID)
+		if task.segmenter != nil {
+			task.stopping = true
+		} else {
+			delete(s.tasks, recordingID)
+		}
 	}
 	s.mu.Unlock()
 
@@ -542,6 +643,23 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 		}
 		s.publishRecordingStatus(rec.ID, rec.CameraID, model.RecordingStatusCompleted)
 		return nil
+	}
+	if task.segmenter != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), segmentStopGracePeriod+2*time.Second)
+		stopErr := task.segmenter.stop(ctx)
+		cancel()
+		s.mu.Lock()
+		current, claimed := s.tasks[recordingID]
+		if claimed && current == task {
+			delete(s.tasks, recordingID)
+		} else {
+			claimed = false
+		}
+		s.mu.Unlock()
+		if claimed {
+			s.finalizeSegmentedRecording(recordingID, task.recording.CameraID)
+		}
+		return stopErr
 	}
 
 	// GB28181：先关闭 FFmpeg 标准输入（EOF 让 FFmpeg 完成 MP4 收尾），再取消
@@ -588,6 +706,48 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 	s.publishRecordingStatus(task.recording.ID, task.recording.CameraID, model.RecordingStatusCompleted)
 
 	return nil
+}
+
+func (s *RecorderService) watchSegmentTask(recordingID uint, task *recordTask) {
+	<-task.segmenter.done
+	s.mu.Lock()
+	current, stillActive := s.tasks[recordingID]
+	if stillActive && current == task {
+		if task.stopping {
+			s.mu.Unlock()
+			return
+		}
+		delete(s.tasks, recordingID)
+	}
+	s.mu.Unlock()
+	if !stillActive || current != task {
+		return
+	}
+	if err := task.segmenter.scanCompleted(true); err != nil {
+		log.Printf("[recorder] recording %d final segment scan after FFmpeg exit: %v", recordingID, err)
+	}
+	s.finalizeSegmentedRecording(recordingID, task.recording.CameraID)
+}
+
+func (s *RecorderService) finalizeSegmentedRecording(recordingID, cameraID uint) {
+	var rec model.Recording
+	if err := s.db.First(&rec, recordingID).Error; err != nil {
+		log.Printf("[recorder] load segmented recording %d for finalize: %v", recordingID, err)
+		return
+	}
+	status := model.RecordingStatusCompleted
+	updates := map[string]any{"status": status}
+	if rec.FileSize <= 0 {
+		status = model.RecordingStatusFailed
+		updates["status"] = status
+		now := time.Now().UTC()
+		updates["end_time"] = now
+	}
+	if err := s.db.Model(&model.Recording{}).Where("id = ?", recordingID).Updates(updates).Error; err != nil {
+		log.Printf("[recorder] finalize segmented recording %d: %v", recordingID, err)
+		return
+	}
+	s.publishRecordingStatus(recordingID, cameraID, status)
 }
 
 // ReconcileOrphaned 清理孤儿录像记录：状态为 recording/failed 但 FFmpeg 进程已不存在。
