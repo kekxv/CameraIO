@@ -34,6 +34,15 @@ func TestPureGoSQLiteDriverMigratesAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen sqlite database: %v", err)
 	}
+	reopenedSQLDB, err := reopened.DB()
+	if err != nil {
+		t.Fatalf("get reopened database handle: %v", err)
+	}
+	defer func() {
+		if err := reopenedSQLDB.Close(); err != nil {
+			t.Errorf("close reopened database: %v", err)
+		}
+	}()
 	var count int64
 	if err := reopened.Model(&model.User{}).Where("username = ?", "pure-go").Count(&count).Error; err != nil {
 		t.Fatalf("query persisted user: %v", err)
