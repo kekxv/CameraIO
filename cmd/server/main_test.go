@@ -1,9 +1,9 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -58,16 +58,28 @@ func (f *startupSchedulerFake) Start() {
 	*f.calls = append(*f.calls, "start-scheduler")
 }
 
+func waitForRecordingStartupStopRequest(t *testing.T, startup *recordingStartupCoordinator) {
+	t.Helper()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for !startup.stopRequested.Load() {
+		select {
+		case <-deadline.C:
+			t.Fatal("recording startup cancellation was not requested")
+		default:
+			runtime.Gosched()
+		}
+	}
+}
+
 func TestStartRecordingSubsystemsReconcilesBeforeScheduler(t *testing.T) {
 	var calls []string
 	recorder := &startupRecorderFake{calls: &calls}
 	scheduler := &startupSchedulerFake{calls: &calls}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := startRecordingSubsystems(ctx, recorder, scheduler, time.Millisecond, nil)
+	startup := startRecordingSubsystems(recorder, scheduler, time.Millisecond, nil)
 	select {
-	case <-done:
+	case <-startup.done:
 	case <-time.After(time.Second):
 		t.Fatal("recording startup did not complete")
 	}
@@ -83,9 +95,7 @@ func TestStartRecordingSubsystemsRetriesReconciliationBeforeStartingScheduler(t 
 	recorder := &startupRecorderFake{calls: &calls, reconcileErrors: []error{probeUnavailable, nil}}
 	scheduler := &startupSchedulerFake{calls: &calls}
 	reported := make(chan error, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := startRecordingSubsystems(ctx, recorder, scheduler, time.Millisecond, func(err error) { reported <- err })
+	startup := startRecordingSubsystems(recorder, scheduler, time.Millisecond, func(err error) { reported <- err })
 	select {
 	case err := <-reported:
 		if !errors.Is(err, probeUnavailable) {
@@ -95,7 +105,7 @@ func TestStartRecordingSubsystemsRetriesReconciliationBeforeStartingScheduler(t 
 		t.Fatal("initial reconciliation failure was not reported")
 	}
 	select {
-	case <-done:
+	case <-startup.done:
 	case <-time.After(time.Second):
 		t.Fatal("recording startup did not retry")
 	}
@@ -115,8 +125,7 @@ func TestRecordingStartupShutdownWaitsForCoordinatorAndPreventsLaterStarts(t *te
 		startRetentionRelease: retentionRelease,
 	}
 	scheduler := &startupSchedulerFake{calls: &calls}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := startRecordingSubsystems(ctx, recorder, scheduler, time.Millisecond, nil)
+	startup := startRecordingSubsystems(recorder, scheduler, time.Millisecond, nil)
 
 	select {
 	case <-retentionEntered:
@@ -124,22 +133,21 @@ func TestRecordingStartupShutdownWaitsForCoordinatorAndPreventsLaterStarts(t *te
 		t.Fatal("recording startup did not reach retention start")
 	}
 
-	cancelCalled := make(chan struct{})
+	shutdownStarted := make(chan struct{})
 	shutdownDone := make(chan struct{})
 	go func() {
-		cancelAndWaitRecordingStartup(func() {
-			cancel()
-			close(cancelCalled)
-		}, done)
+		close(shutdownStarted)
+		cancelAndWaitRecordingStartup(startup)
 		calls = append(calls, "stop-scheduler", "stop-recorder")
 		close(shutdownDone)
 	}()
 
-	<-cancelCalled
+	<-shutdownStarted
+	waitForRecordingStartupStopRequest(t, startup)
 	select {
 	case <-shutdownDone:
 		t.Fatal("shutdown returned while recording startup was still running")
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 
 	close(retentionRelease)
@@ -159,5 +167,52 @@ func TestRecordingStartupShutdownWaitsForCoordinatorAndPreventsLaterStarts(t *te
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("shutdown calls = %v, want %v", calls, want)
+	}
+}
+
+func TestRecordingStartupCoordinatorSerializesCancellationWithActivation(t *testing.T) {
+	startup := newRecordingStartupCoordinator()
+	activationEntered := make(chan struct{})
+	activationRelease := make(chan struct{})
+	activationDone := make(chan struct{})
+	go func() {
+		startup.activate(func() {
+			close(activationEntered)
+			<-activationRelease
+		})
+		close(activationDone)
+	}()
+
+	<-activationEntered
+	cancelDone := make(chan struct{})
+	go func() {
+		startup.cancel()
+		close(cancelDone)
+	}()
+	waitForRecordingStartupStopRequest(t, startup)
+	select {
+	case <-cancelDone:
+		t.Fatal("cancellation interleaved between activation authorization and start completion")
+	default:
+	}
+
+	close(activationRelease)
+	select {
+	case <-activationDone:
+	case <-time.After(time.Second):
+		t.Fatal("authorized activation did not complete")
+	}
+	select {
+	case <-cancelDone:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not complete after activation")
+	}
+
+	startedAfterCancel := false
+	if startup.activate(func() { startedAfterCancel = true }) {
+		t.Fatal("activation was authorized after cancellation")
+	}
+	if startedAfterCancel {
+		t.Fatal("start callback ran after cancellation")
 	}
 }

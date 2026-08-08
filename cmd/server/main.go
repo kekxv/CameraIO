@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,6 +30,40 @@ type scheduleStartup interface {
 	Start()
 }
 
+type recordingStartupCoordinator struct {
+	ctx           context.Context
+	cancelContext context.CancelFunc
+	done          chan struct{}
+	activationMu  sync.Mutex
+	stopRequested atomic.Bool
+}
+
+func newRecordingStartupCoordinator() *recordingStartupCoordinator {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &recordingStartupCoordinator{
+		ctx:           ctx,
+		cancelContext: cancel,
+		done:          make(chan struct{}),
+	}
+}
+
+func (c *recordingStartupCoordinator) activate(start func()) bool {
+	c.activationMu.Lock()
+	defer c.activationMu.Unlock()
+	if c.stopRequested.Load() || c.ctx.Err() != nil {
+		return false
+	}
+	start()
+	return true
+}
+
+func (c *recordingStartupCoordinator) cancel() {
+	c.stopRequested.Store(true)
+	c.activationMu.Lock()
+	c.cancelContext()
+	c.activationMu.Unlock()
+}
+
 func prepareRecordingSubsystems(recorder recordingStartup) error {
 	if err := recorder.ReconcileSegments(); err != nil {
 		return fmt.Errorf("reconcile recording segments: %w", err)
@@ -39,13 +75,13 @@ func prepareRecordingSubsystems(recorder recordingStartup) error {
 	return nil
 }
 
-func startRecordingSubsystems(ctx context.Context, recorder recordingStartup, scheduler scheduleStartup, retryInterval time.Duration, reportError func(error)) <-chan struct{} {
-	done := make(chan struct{})
+func startRecordingSubsystems(recorder recordingStartup, scheduler scheduleStartup, retryInterval time.Duration, reportError func(error)) *recordingStartupCoordinator {
+	startup := newRecordingStartupCoordinator()
 	if retryInterval <= 0 {
 		retryInterval = 5 * time.Second
 	}
 	go func() {
-		defer close(done)
+		defer close(startup.done)
 		for {
 			if err := prepareRecordingSubsystems(recorder); err != nil {
 				if reportError != nil {
@@ -53,7 +89,7 @@ func startRecordingSubsystems(ctx context.Context, recorder recordingStartup, sc
 				}
 				timer := time.NewTimer(retryInterval)
 				select {
-				case <-ctx.Done():
+				case <-startup.ctx.Done():
 					if !timer.Stop() {
 						select {
 						case <-timer.C:
@@ -65,33 +101,24 @@ func startRecordingSubsystems(ctx context.Context, recorder recordingStartup, sc
 					continue
 				}
 			}
-			select {
-			case <-ctx.Done():
+			if !startup.activate(recorder.StartRetention) {
 				return
-			default:
 			}
-			recorder.StartRetention()
-			select {
-			case <-ctx.Done():
+			if !startup.activate(recorder.StartSweep) {
 				return
-			default:
 			}
-			recorder.StartSweep()
-			select {
-			case <-ctx.Done():
+			if !startup.activate(scheduler.Start) {
 				return
-			default:
 			}
-			scheduler.Start()
 			return
 		}
 	}()
-	return done
+	return startup
 }
 
-func cancelAndWaitRecordingStartup(cancel context.CancelFunc, done <-chan struct{}) {
-	cancel()
-	<-done
+func cancelAndWaitRecordingStartup(startup *recordingStartupCoordinator) {
+	startup.cancel()
+	<-startup.done
 }
 
 func main() {
@@ -140,11 +167,9 @@ func main() {
 	localCamSvc := service.NewLocalCameraService()
 	discoverySvc := service.NewDiscoveryService(onvifSvc)
 	scheduleSvc := service.NewScheduleService(db, recorderSvc)
-	recordingStartupCtx, stopRecordingStartup := context.WithCancel(context.Background())
-	defer stopRecordingStartup()
 
 	// 启动后台服务
-	recordingStartupDone := startRecordingSubsystems(recordingStartupCtx, recorderSvc, scheduleSvc, 5*time.Second, func(err error) {
+	recordingStartup := startRecordingSubsystems(recorderSvc, scheduleSvc, 5*time.Second, func(err error) {
 		log.Printf("[recorder] startup maintenance deferred; retrying: %v", err)
 	})
 	monitor.Start()
@@ -189,7 +214,7 @@ func main() {
 	defer cancel()
 
 	// 1. 先停止后台服务（拉流/录像），让 MJPEG 等长连接请求尽快返回
-	cancelAndWaitRecordingStartup(stopRecordingStartup, recordingStartupDone)
+	cancelAndWaitRecordingStartup(recordingStartup)
 	cameraSvc.Shutdown()
 	streamSvc.Shutdown()
 	scheduleSvc.Stop()
