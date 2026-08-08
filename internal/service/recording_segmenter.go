@@ -184,7 +184,7 @@ func (s *segmentSupervisor) stopProcess() error {
 		<-done
 	}
 	_ = stdin.Close()
-	return errors.Join(requestErr, s.scanCompleted(true))
+	return requestErr
 }
 
 func errorsIsProcessDone(err error) bool {
@@ -207,12 +207,26 @@ func (s *segmentSupervisor) scanCompleted(final bool) error {
 	if !final && len(paths) > 0 {
 		paths = paths[:len(paths)-1]
 	}
+	var knownPaths []string
+	if err := s.db.Model(&model.RecordingSegment{}).
+		Where("recording_id = ?", s.recording.ID).
+		Pluck("file_path", &knownPaths).Error; err != nil {
+		return fmt.Errorf("load known recording segments: %w", err)
+	}
+	known := make(map[string]struct{}, len(knownPaths))
+	for _, path := range knownPaths {
+		known[path] = struct{}{}
+	}
 
 	probe := s.probeDuration
 	if probe == nil {
 		probe = probeSegmentDuration
 	}
+	segments := make([]model.RecordingSegment, 0, len(paths))
 	for sequence, path := range paths {
+		if _, indexed := known[path]; indexed {
+			continue
+		}
 		start, err := segmentStartTime(path)
 		if err != nil {
 			return err
@@ -230,7 +244,7 @@ func (s *segmentSupervisor) scanCompleted(final bool) error {
 		if err != nil {
 			return fmt.Errorf("stat segment %s: %w", path, err)
 		}
-		segment := &model.RecordingSegment{
+		segments = append(segments, model.RecordingSegment{
 			RecordingID: s.recording.ID,
 			CameraID:    s.recording.CameraID,
 			Sequence:    sequence + 1,
@@ -241,22 +255,24 @@ func (s *segmentSupervisor) scanCompleted(final bool) error {
 			DurationMS:  duration.Milliseconds(),
 			Status:      model.RecordingStatusCompleted,
 			Format:      model.FormatMP4,
-		}
-		if err := s.storeSegment(segment); err != nil {
-			return err
-		}
+		})
 	}
-	return nil
+	if len(segments) == 0 && len(knownPaths) == 0 {
+		return nil
+	}
+	return s.storeSegments(segments)
 }
 
-func (s *segmentSupervisor) storeSegment(segment *model.RecordingSegment) error {
+func (s *segmentSupervisor) storeSegments(segments []model.RecordingSegment) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "file_path"}},
-			DoNothing: true,
-		}).Create(segment)
-		if result.Error != nil {
-			return fmt.Errorf("store segment: %w", result.Error)
+		if len(segments) > 0 {
+			result := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "file_path"}},
+				DoNothing: true,
+			}).Create(&segments)
+			if result.Error != nil {
+				return fmt.Errorf("store segment: %w", result.Error)
+			}
 		}
 
 		var sums struct {

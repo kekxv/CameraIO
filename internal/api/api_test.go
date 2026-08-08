@@ -545,6 +545,30 @@ func TestStartRecording_InvalidInput(t *testing.T) {
 	}
 }
 
+func TestStartRecording_UnsafeOptionsReturnBadRequest(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	camera := &model.Camera{Name: "front", RTSPUrl: "rtsp://camera/live", AccessProtocol: model.ProtocolRTSP}
+	if err := db.Create(camera).Error; err != nil {
+		t.Fatalf("create camera: %v", err)
+	}
+
+	for _, body := range []string{
+		fmt.Sprintf(`{"camera_id":%d,"format":"webm"}`, camera.ID),
+		fmt.Sprintf(`{"camera_id":%d,"format":"mp4","bitrate":600}`, camera.ID),
+	} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/api/v1/recordings/start", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("unsafe start status = %d, want 400: %s", w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestStopRecording_NotActive(t *testing.T) {
 	h := setupTestHandler(t)
 	router := h.SetupRouter()

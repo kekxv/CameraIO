@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,11 @@ func (h *Handler) StartRecording(c *gin.Context) {
 	}
 	recording, err := h.recorderSvc.StartRecording(&req)
 	if err != nil {
+		var validationErr *service.RecordingValidationError
+		if errors.As(err, &validationErr) {
+			fail(c, http.StatusBadRequest, validationErr.Error())
+			return
+		}
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}

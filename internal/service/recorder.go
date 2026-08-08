@@ -35,6 +35,7 @@ type RecorderService struct {
 
 	segmentCommand segmentCommandFactory
 	probeAAC       func(context.Context, string) (bool, error)
+	segmentProbe   segmentDurationProbe
 }
 
 type recordTask struct {
@@ -47,6 +48,8 @@ type recordTask struct {
 	forceStopped bool // 是否由内部 watchdog 强制停止（到期）
 	segmenter    *segmentSupervisor
 	stopping     bool
+	finalizing   bool
+	finalized    chan struct{}
 	// GB28181 录像：NALU 订阅
 	isGB28181 bool
 	naluCh    <-chan NALU
@@ -105,15 +108,15 @@ func (s *RecorderService) sweepDeadProcesses() {
 	s.mu.Lock()
 	var dead []*recordTask
 	for _, t := range s.tasks {
-		if t.stopping {
-			continue
-		}
 		if t.segmenter != nil {
 			select {
 			case <-t.segmenter.done:
 				dead = append(dead, t)
 			default:
 			}
+			continue
+		}
+		if t.stopping {
 			continue
 		}
 		if processExited(t.cmd) {
@@ -126,18 +129,19 @@ func (s *RecorderService) sweepDeadProcesses() {
 		s.mu.Lock()
 		current, ok := s.tasks[t.recording.ID]
 		claimed := ok && current == t
+		if t.segmenter != nil {
+			claimed = claimed && !t.finalizing
+			s.mu.Unlock()
+			if claimed {
+				s.finalizeSegmentTask(t.recording.ID, t)
+			}
+			continue
+		}
 		if claimed {
 			delete(s.tasks, t.recording.ID)
 		}
 		s.mu.Unlock()
 		if !claimed {
-			continue
-		}
-		if t.segmenter != nil {
-			if err := t.segmenter.scanCompleted(true); err != nil {
-				log.Printf("[recorder] sweep recording %d final segment scan: %v", t.recording.ID, err)
-			}
-			s.finalizeSegmentedRecording(t.recording.ID, t.recording.CameraID)
 			continue
 		}
 		t.markDone()
@@ -223,6 +227,13 @@ type StopRecordingInput struct {
 	RecordingID uint `json:"recording_id" binding:"required"`
 }
 
+// RecordingValidationError identifies caller-correctable recording options.
+type RecordingValidationError struct {
+	Message string
+}
+
+func (e *RecordingValidationError) Error() string { return e.Message }
+
 // ---------- 录像控制 ----------
 
 // StartRecording 开始录制指定摄像头的 RTSP 流。
@@ -243,13 +254,13 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	case model.FormatMP4, model.FormatWebM, model.FormatTS:
 		// OK
 	default:
-		return nil, fmt.Errorf("unsupported format: %s (use mp4, webm, or ts)", format)
+		return nil, &RecordingValidationError{Message: fmt.Sprintf("unsupported format: %s (use mp4 or ts)", format)}
 	}
 	if format == model.FormatWebM {
-		return nil, errors.New("webm recordings are not supported by the resource-safe recorder; use mp4")
+		return nil, &RecordingValidationError{Message: "webm recordings are not supported by the resource-safe recorder; use mp4"}
 	}
 	if in.Bitrate > 0 {
-		return nil, errors.New("bitrate must be 0 for resource-safe stream-copy recording")
+		return nil, &RecordingValidationError{Message: "bitrate must be 0 for resource-safe stream-copy recording"}
 	}
 
 	now := time.Now().UTC()
@@ -303,8 +314,16 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 		task, err = s.startFFmpegRecording(recording, args)
 	}
 	if err != nil {
-		s.db.Model(recording).Update("status", model.RecordingStatusFailed)
-		return nil, err
+		var updateErr, cleanupErr error
+		if dbErr := s.db.Model(recording).Update("status", model.RecordingStatusFailed).Error; dbErr != nil {
+			updateErr = fmt.Errorf("mark recording start failed: %w", dbErr)
+		}
+		if segmented {
+			if removeErr := removeEmptyRecordingSessionDir(recording.FilePath); removeErr != nil {
+				cleanupErr = fmt.Errorf("remove empty recording session dir: %w", removeErr)
+			}
+		}
+		return nil, errors.Join(err, updateErr, cleanupErr)
 	}
 
 	s.mu.Lock()
@@ -330,12 +349,12 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 
 func (s *RecorderService) startSegmentedRecording(recording *model.Recording, cam model.Camera) (*recordTask, error) {
 	sessionDir := filepath.Join(s.cfg.RecordingsDir, strconv.FormatUint(uint64(cam.ID), 10), strconv.FormatUint(uint64(recording.ID), 10))
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create recording session dir: %w", err)
-	}
 	recording.FilePath = sessionDir
 	if err := s.db.Model(recording).Update("file_path", sessionDir).Error; err != nil {
 		return nil, fmt.Errorf("store recording session path: %w", err)
+	}
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create recording session dir: %w", err)
 	}
 
 	withAAC := false
@@ -364,7 +383,7 @@ func (s *RecorderService) startSegmentedRecording(recording *model.Recording, ca
 		sessionDir:    sessionDir,
 		args:          buildSegmentRecordingArgs(cam.RTSPUrl, outputPattern, segmentSeconds, withAAC),
 		newCommand:    s.segmentCommand,
-		probeDuration: nil,
+		probeDuration: s.segmentProbe,
 	}
 	if err := supervisor.start(); err != nil {
 		return nil, err
@@ -375,7 +394,29 @@ func (s *RecorderService) startSegmentedRecording(recording *model.Recording, ca
 		stderr:    &supervisor.stderr,
 		done:      supervisor.done,
 		segmenter: supervisor,
+		finalized: make(chan struct{}),
 	}, nil
+}
+
+func removeEmptyRecordingSessionDir(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return nil
+	}
+	return os.Remove(path)
 }
 
 // startFFmpegRecording 启动 FFmpeg 直接拉流录制（RTSP/本地）。
@@ -606,11 +647,20 @@ func (s *RecorderService) buildRecordingArgs(rtspURL, filePath, format string, w
 
 // StopRecording 停止指定录像（幂等：任务不存在时直接更新 DB 状态）。
 func (s *RecorderService) StopRecording(recordingID uint) error {
+	ctx, cancel := context.WithTimeout(context.Background(), segmentStopGracePeriod+2*time.Second)
+	defer cancel()
+	return s.stopRecording(ctx, recordingID)
+}
+
+func (s *RecorderService) stopRecording(ctx context.Context, recordingID uint) error {
 	s.mu.Lock()
 	task, ok := s.tasks[recordingID]
 	if ok {
 		if task.segmenter != nil {
 			task.stopping = true
+			if task.finalized == nil {
+				task.finalized = make(chan struct{})
+			}
 		} else {
 			delete(s.tasks, recordingID)
 		}
@@ -626,6 +676,9 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 		// 幂等：已经是完成/失败状态，直接返回成功
 		if rec.Status == model.RecordingStatusCompleted || rec.Status == model.RecordingStatusFailed {
 			return nil
+		}
+		if rec.StorageMode == model.StorageModeSegmented {
+			return s.recoverSegmentedRecording(&rec)
 		}
 		now := time.Now()
 		duration := int(now.Sub(rec.StartTime).Seconds())
@@ -645,21 +698,16 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 		return nil
 	}
 	if task.segmenter != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), segmentStopGracePeriod+2*time.Second)
 		stopErr := task.segmenter.stop(ctx)
-		cancel()
-		s.mu.Lock()
-		current, claimed := s.tasks[recordingID]
-		if claimed && current == task {
-			delete(s.tasks, recordingID)
-		} else {
-			claimed = false
+		if stopErr != nil {
+			return stopErr
 		}
-		s.mu.Unlock()
-		if claimed {
-			s.finalizeSegmentedRecording(recordingID, task.recording.CameraID)
+		select {
+		case <-task.finalized:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-		return stopErr
 	}
 
 	// GB28181：先关闭 FFmpeg 标准输入（EOF 让 FFmpeg 完成 MP4 收尾），再取消
@@ -710,44 +758,81 @@ func (s *RecorderService) StopRecording(recordingID uint) error {
 
 func (s *RecorderService) watchSegmentTask(recordingID uint, task *recordTask) {
 	<-task.segmenter.done
-	s.mu.Lock()
-	current, stillActive := s.tasks[recordingID]
-	if stillActive && current == task {
-		if task.stopping {
-			s.mu.Unlock()
-			return
-		}
-		delete(s.tasks, recordingID)
-	}
-	s.mu.Unlock()
-	if !stillActive || current != task {
-		return
-	}
-	if err := task.segmenter.scanCompleted(true); err != nil {
-		log.Printf("[recorder] recording %d final segment scan after FFmpeg exit: %v", recordingID, err)
-	}
-	s.finalizeSegmentedRecording(recordingID, task.recording.CameraID)
+	s.finalizeSegmentTask(recordingID, task)
 }
 
-func (s *RecorderService) finalizeSegmentedRecording(recordingID, cameraID uint) {
+func (s *RecorderService) finalizeSegmentTask(recordingID uint, task *recordTask) {
+	s.mu.Lock()
+	current, active := s.tasks[recordingID]
+	if !active || current != task || task.finalizing {
+		s.mu.Unlock()
+		return
+	}
+	task.finalizing = true
+	if task.finalized == nil {
+		task.finalized = make(chan struct{})
+	}
+	s.mu.Unlock()
+
+	if err := task.segmenter.scanCompleted(true); err != nil {
+		log.Printf("[recorder] recording %d final segment scan after FFmpeg exit: %v", recordingID, err)
+		s.mu.Lock()
+		task.finalizing = false
+		s.mu.Unlock()
+		return
+	}
+	if err := s.finalizeSegmentedRecording(recordingID, task.recording.CameraID); err != nil {
+		log.Printf("[recorder] recording %d final status update: %v", recordingID, err)
+		s.mu.Lock()
+		task.finalizing = false
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Lock()
+	if current, ok := s.tasks[recordingID]; ok && current == task {
+		delete(s.tasks, recordingID)
+	}
+	close(task.finalized)
+	s.mu.Unlock()
+}
+
+func (s *RecorderService) finalizeSegmentedRecording(recordingID, cameraID uint) error {
 	var rec model.Recording
 	if err := s.db.First(&rec, recordingID).Error; err != nil {
-		log.Printf("[recorder] load segmented recording %d for finalize: %v", recordingID, err)
-		return
+		return fmt.Errorf("load segmented recording: %w", err)
+	}
+	var segmentCount int64
+	if err := s.db.Model(&model.RecordingSegment{}).Where("recording_id = ? AND file_size > 0", recordingID).Count(&segmentCount).Error; err != nil {
+		return fmt.Errorf("count recording segments: %w", err)
 	}
 	status := model.RecordingStatusCompleted
 	updates := map[string]any{"status": status}
-	if rec.FileSize <= 0 {
+	if segmentCount == 0 {
 		status = model.RecordingStatusFailed
 		updates["status"] = status
+		updates["file_size"] = 0
+		updates["duration"] = 0
 		now := time.Now().UTC()
 		updates["end_time"] = now
 	}
 	if err := s.db.Model(&model.Recording{}).Where("id = ?", recordingID).Updates(updates).Error; err != nil {
-		log.Printf("[recorder] finalize segmented recording %d: %v", recordingID, err)
-		return
+		return fmt.Errorf("update segmented recording: %w", err)
 	}
 	s.publishRecordingStatus(recordingID, cameraID, status)
+	return nil
+}
+
+func (s *RecorderService) recoverSegmentedRecording(recording *model.Recording) error {
+	supervisor := &segmentSupervisor{
+		db:            s.db,
+		recording:     recording,
+		sessionDir:    recording.FilePath,
+		probeDuration: s.segmentProbe,
+	}
+	if err := supervisor.scanCompleted(true); err != nil {
+		return fmt.Errorf("scan recovered recording segments: %w", err)
+	}
+	return s.finalizeSegmentedRecording(recording.ID, recording.CameraID)
 }
 
 // ReconcileOrphaned 清理孤儿录像记录：状态为 recording/failed 但 FFmpeg 进程已不存在。
@@ -766,6 +851,12 @@ func (s *RecorderService) ReconcileOrphaned() {
 		s.mu.Unlock()
 		if active {
 			continue // 仍在录制
+		}
+		if rec.StorageMode == model.StorageModeSegmented {
+			if err := s.recoverSegmentedRecording(&rec); err != nil {
+				log.Printf("[recorder] recover orphaned segmented recording %d: %v", rec.ID, err)
+			}
+			continue
 		}
 
 		// 检查文件是否有效
@@ -977,6 +1068,44 @@ func (s *RecorderService) DeleteRecording(id uint) error {
 		if err := s.StopRecording(id); err != nil {
 			return err
 		}
+	}
+	if rec.StorageMode == model.StorageModeSegmented {
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			var segments []model.RecordingSegment
+			if err := tx.Where("recording_id = ?", id).Find(&segments).Error; err != nil {
+				return err
+			}
+			for _, segment := range segments {
+				if err := os.Remove(segment.FilePath); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("delete segment file %s: %w", segment.FilePath, err)
+				}
+			}
+			entries, err := os.ReadDir(rec.FilePath)
+			if err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("read recording session dir %s: %w", rec.FilePath, err)
+			}
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".mp4") {
+					continue
+				}
+				path := filepath.Join(rec.FilePath, entry.Name())
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("delete unindexed segment file %s: %w", path, err)
+				}
+			}
+			if err := tx.Where("recording_id = ?", id).Delete(&model.RecordingSegment{}).Error; err != nil {
+				return err
+			}
+			return tx.Delete(&model.Recording{}, id).Error
+		}); err != nil {
+			return err
+		}
+		if rec.FilePath != "" {
+			if err := os.Remove(rec.FilePath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("delete recording session dir %s: %w", rec.FilePath, err)
+			}
+		}
+		return nil
 	}
 
 	// 删除视频文件（忽略不存在）
