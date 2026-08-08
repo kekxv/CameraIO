@@ -1,8 +1,111 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { compile } from '@vue/compiler-dom'
+import { parse } from '@vue/compiler-sfc'
+import * as Vue from 'vue'
+import { renderToString } from '@vue/server-renderer'
 
 const css = readFileSync(new URL('./assets/main.css', import.meta.url), 'utf8')
+const recordingBehavior = await import('./api.js')
+
+const renderRecordings = async (overrides = {}) => {
+  const source = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
+  const descriptor = parse(source).descriptor
+  const { code } = compile(descriptor.template.content, { mode: 'function' })
+  const render = new Function('Vue', code)(Vue)
+  const segment = {
+    id: 1,
+    recording_id: 18,
+    start_time: '2026-08-08T10:10:00Z',
+    end_time: '2026-08-08T10:20:00Z',
+    status: 'completed',
+  }
+  const context = {
+    activeTab: 'recordings',
+    cameras: [{ id: 7, name: 'North Gate', ip: '192.0.2.7' }],
+    recordings: [{
+      id: 18,
+      camera_id: 7,
+      start_time: segment.start_time,
+      duration: 600,
+      file_size: 1000,
+      trigger_type: 'schedule',
+      status: 'completed',
+      storage_mode: 'segmented',
+      format: 'mp4',
+    }],
+    total: 1,
+    loading: false,
+    filter: { cameraId: 7, status: '' },
+    totalPages: 1,
+    page: 1,
+    schedules: [],
+    previewRec: null,
+    showScheduleDialog: false,
+    savingSchedule: false,
+    scheduleForm: {},
+    weekdays: [],
+    timeSearch: {
+      cameraId: 7,
+      from: '2026-08-08T10:00',
+      to: '2026-08-08T11:00',
+      at: '2026-08-08T10:15',
+    },
+    searchingTimeline: false,
+    timelineError: '',
+    coverageParts: [
+      { type: 'gap', startPercent: 0, widthPercent: 16.666, start_time: '2026-08-08T10:00:00Z', end_time: segment.start_time, segment: null },
+      { type: 'recording', startPercent: 16.666, widthPercent: 16.666, start_time: segment.start_time, end_time: segment.end_time, segment },
+    ],
+    selectedTimePercent: 25,
+    timePlaybackOpen: true,
+    playbackState: {
+      activeSlot: 0,
+      point: { segment, offset_ms: 0, next_segment_id: null },
+      gap: false,
+      error: '',
+      loading: false,
+      loadingNext: false,
+    },
+    loadRecordings() {},
+    searchTimeline() {},
+    playSelectedTime() {},
+    openTimePlayback() {},
+    openRecordingPreview() {},
+    closeTimePlayback() {},
+    closeLegacyPreview() {},
+    selectCoveragePart() {},
+    attachPlaybackVideo() {},
+    handlePlaybackMetadata() {},
+    handlePlaybackCanPlay() {},
+    handlePlaybackEnded() {},
+    previewRecording() {},
+    handleStopRecording() {},
+    handleDeleteRecording() {},
+    goPage() {},
+    openScheduleDialog() {},
+    toggleSchedule() {},
+    handleDeleteSchedule() {},
+    toggleDay() {},
+    saveSchedule() {},
+    cameraName: () => 'North Gate',
+    formatTime: (value) => value,
+    formatDuration: () => '10:00',
+    formatSize: () => '1000 B',
+    triggerClass: () => '',
+    triggerLabel: () => '定时',
+    statusLabel: () => '已完成',
+    downloadUrl: () => '/legacy-download',
+    isSegmentedRecording: (recording) => recording.storage_mode === 'segmented',
+    coverageTitle: (part) => part.type === 'gap' ? '录像空档' : '可播放录像',
+    ...overrides,
+  }
+  const app = Vue.createSSRApp({ setup: () => context, render })
+  app.component('AppIcon', { render: () => null })
+  app.config.warnHandler = () => {}
+  return renderToString(app)
+}
 
 test('bright design system exposes shared primitives and Chrome 72 fallbacks', () => {
   for (const selector of [
@@ -69,4 +172,148 @@ test('recordings view preserves recording and schedule actions in a responsive s
   assert.match(recordings, /saveSchedule/)
   assert.match(recordings, /ui-card/)
   assert.match(recordings, /overflow-x-auto/)
+})
+
+test('recording time search converts local wall-clock values to UTC and rejects ranges over 24 hours', () => {
+  assert.equal(typeof recordingBehavior.normalizeRecordingSearch, 'function')
+
+  assert.deepEqual(recordingBehavior.normalizeRecordingSearch({
+    cameraId: 7,
+    from: '2026-08-08T09:00',
+    to: '2026-08-08T10:00',
+    at: '2026-08-08T09:15',
+  }), {
+    camera_id: 7,
+    from: '2026-08-08T09:00:00.000Z',
+    to: '2026-08-08T10:00:00.000Z',
+    at: '2026-08-08T09:15:00.000Z',
+  })
+
+  assert.throws(() => recordingBehavior.normalizeRecordingSearch({
+    cameraId: 7,
+    from: '2026-08-07T09:59',
+    to: '2026-08-08T10:00',
+    at: '2026-08-08T09:15',
+  }), /24/)
+})
+
+test('recording coverage describes completed ranges and explicit gaps', () => {
+  assert.equal(typeof recordingBehavior.buildRecordingCoverage, 'function')
+
+  const parts = recordingBehavior.buildRecordingCoverage([
+    { id: 1, start_time: '2026-08-08T10:10:00Z', end_time: '2026-08-08T10:20:00Z', status: 'completed' },
+    { id: 2, start_time: '2026-08-08T10:40:00Z', end_time: '2026-08-08T11:00:00Z', status: 'completed' },
+    { id: 3, start_time: '2026-08-08T10:25:00Z', end_time: '2026-08-08T10:30:00Z', status: 'recording' },
+  ], '2026-08-08T10:00:00Z', '2026-08-08T11:00:00Z')
+
+  assert.deepEqual(parts.map((part) => ({
+    type: part.type,
+    id: part.segment ? part.segment.id : null,
+    startPercent: Math.round(part.startPercent),
+    widthPercent: Math.round(part.widthPercent),
+  })), [
+    { type: 'gap', id: null, startPercent: 0, widthPercent: 17 },
+    { type: 'recording', id: 1, startPercent: 17, widthPercent: 17 },
+    { type: 'gap', id: null, startPercent: 33, widthPercent: 33 },
+    { type: 'recording', id: 2, startPercent: 67, widthPercent: 33 },
+  ])
+})
+
+test('recording playback seeks after metadata and swaps only when the preloaded MP4 can play', async () => {
+  assert.equal(typeof recordingBehavior.createRecordingPlaybackCoordinator, 'function')
+
+  const makeVideo = () => ({
+    src: '',
+    currentTime: 0,
+    pauseCalls: 0,
+    playCalls: 0,
+    loadCalls: 0,
+    pause() { this.pauseCalls += 1 },
+    play() { this.playCalls += 1; return Promise.resolve() },
+    load() { this.loadCalls += 1 },
+    removeAttribute(name) { if (name === 'src') this.src = '' },
+  })
+  const first = makeVideo()
+  const second = makeVideo()
+  const segments = [
+    { id: 1, start_time: '2026-08-08T10:00:00Z', end_time: '2026-08-08T10:01:00Z' },
+    { id: 2, start_time: '2026-08-08T10:01:00Z', end_time: '2026-08-08T10:02:00Z' },
+    { id: 3, start_time: '2026-08-08T10:02:00Z', end_time: '2026-08-08T10:03:00Z' },
+  ]
+  const resolveCalls = []
+  const coordinator = recordingBehavior.createRecordingPlaybackCoordinator({
+    mediaUrl: (id) => `/media/${id}.mp4`,
+    resolvePlayback: async (params) => {
+      resolveCalls.push(params)
+      if (params.at === '2026-08-08T10:00:02.500Z') {
+        return { segment: segments[0], offset_ms: 2500, next_segment_id: 2 }
+      }
+      return { segment: segments[1], offset_ms: 0, next_segment_id: 3 }
+    },
+  })
+  coordinator.attach(0, first)
+  coordinator.attach(1, second)
+
+  await coordinator.open({ cameraId: 7, at: '2026-08-08T10:00:02.500Z', segments })
+  assert.equal(first.src, '/media/1.mp4')
+  assert.equal(second.src, '/media/2.mp4')
+  coordinator.loadedMetadata(0)
+  assert.equal(first.currentTime, 2.5)
+
+  await coordinator.ended(0)
+  assert.equal(coordinator.state.activeSlot, 0)
+  assert.equal(coordinator.state.loadingNext, true)
+  assert.equal(first.playCalls, 0)
+
+  await coordinator.canPlay(1)
+  assert.equal(coordinator.state.activeSlot, 1)
+  assert.equal(second.playCalls, 1)
+  assert.equal(first.src, '/media/3.mp4')
+  assert.deepEqual(resolveCalls, [
+    { camera_id: 7, at: '2026-08-08T10:00:02.500Z' },
+    { camera_id: 7, at: '2026-08-08T10:01:00.000Z' },
+  ])
+
+  coordinator.close()
+  assert.equal(first.src, '')
+  assert.equal(second.src, '')
+  assert.equal(first.pauseCalls, 1)
+  assert.equal(second.pauseCalls, 1)
+})
+
+test('recording playback exposes a gap state for a missing selected time', async () => {
+  const coordinator = recordingBehavior.createRecordingPlaybackCoordinator({
+    mediaUrl: (id) => `/media/${id}.mp4`,
+    resolvePlayback: async () => {
+      const error = new Error('not found')
+      error.response = { status: 404 }
+      throw error
+    },
+  })
+
+  await coordinator.open({ cameraId: 7, at: '2026-08-08T10:30:00.000Z', segments: [] })
+  assert.equal(coordinator.state.gap, true)
+  assert.equal(coordinator.state.error, '')
+})
+
+test('recording center renders wall-clock coverage and seekable dual-video playback behavior', async () => {
+  const html = await renderRecordings()
+
+  assert.equal((html.match(/type="datetime-local"/g) || []).length, 3)
+  assert.match(html, /North Gate/)
+  assert.match(html, /录像空档/)
+  assert.match(html, /可播放录像/)
+  assert.equal((html.match(/<video/g) || []).length, 2)
+  assert.match(html, /preload="auto"/)
+  assert.match(html, /导出尚未实现/)
+  assert.doesNotMatch(html, /href="\/legacy-download"/)
+})
+
+test('recording center preloads the hidden player without autoplaying it', async () => {
+  const html = await renderRecordings()
+  const videos = html.match(/<video[^>]*>/g) || []
+
+  assert.equal(videos.length, 2)
+  assert.equal(videos.filter((video) => video.includes(' autoplay')).length, 1)
+  assert.equal(videos.filter((video) => video.includes('style="display:none;"')).length, 1)
 })

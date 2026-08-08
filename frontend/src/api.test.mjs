@@ -6,7 +6,56 @@ globalThis.localStorage = {
   removeItem: () => {},
 }
 
-const { default: api, captureSnapshot, getAPIErrorMessage } = await import('./api.js')
+const apiModule = await import('./api.js')
+const { default: api, captureSnapshot, getAPIErrorMessage } = apiModule
+
+test('recording time helpers call the timeline and play-at APIs with UTC parameters', async () => {
+  assert.equal(typeof apiModule.getRecordingTimeline, 'function')
+  assert.equal(typeof apiModule.resolveRecordingPlayback, 'function')
+  assert.equal(typeof apiModule.getSegmentMediaUrl, 'function')
+
+  const originalAdapter = api.defaults.adapter
+  const requests = []
+  api.defaults.adapter = async (config) => {
+    requests.push(config)
+    return {
+      data: { code: 0, data: config.url.endsWith('/timeline') ? { segments: [{ id: 41 }] } : { segment: { id: 41 }, offset_ms: 2500 } },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+
+  try {
+    const timeline = await apiModule.getRecordingTimeline({
+      camera_id: 7,
+      from: '2026-08-08T09:00:00.000Z',
+      to: '2026-08-08T10:00:00.000Z',
+    })
+    const playback = await apiModule.resolveRecordingPlayback({
+      camera_id: 7,
+      at: '2026-08-08T09:15:30.000Z',
+    })
+
+    assert.deepEqual(timeline, { segments: [{ id: 41 }] })
+    assert.deepEqual(playback, { segment: { id: 41 }, offset_ms: 2500 })
+    assert.equal(requests[0].url, '/recordings/timeline')
+    assert.deepEqual(requests[0].params, {
+      camera_id: 7,
+      from: '2026-08-08T09:00:00.000Z',
+      to: '2026-08-08T10:00:00.000Z',
+    })
+    assert.equal(requests[1].url, '/recordings/play-at')
+    assert.deepEqual(requests[1].params, {
+      camera_id: 7,
+      at: '2026-08-08T09:15:30.000Z',
+    })
+    assert.equal(apiModule.getSegmentMediaUrl(41), '/api/v1/recording-segments/41/media')
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+})
 
 test('captureSnapshot requests the native JPEG endpoint as a blob', async () => {
   const originalAdapter = api.defaults.adapter

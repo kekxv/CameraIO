@@ -72,6 +72,76 @@
         </div>
       </div>
 
+      <!-- 按时间查找录像 -->
+      <div class="ui-card p-4 mb-4">
+        <div class="flex flex-wrap items-end compat-flex-gap-3">
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">播放摄像头</label>
+            <select v-model="timeSearch.cameraId" class="ui-select">
+              <option v-for="cam in cameras" :key="cam.id" :value="cam.id">
+                {{ cam.name }}
+              </option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">范围开始</label>
+            <input v-model="timeSearch.from" type="datetime-local" class="ui-input" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">范围结束</label>
+            <input v-model="timeSearch.to" type="datetime-local" class="ui-input" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">播放时间</label>
+            <input v-model="timeSearch.at" type="datetime-local" class="ui-input" />
+          </div>
+          <button
+            class="ui-button-secondary disabled:opacity-50"
+            :disabled="searchingTimeline || !timeSearch.cameraId"
+            @click="searchTimeline"
+          >
+            {{ searchingTimeline ? '查询中...' : '查询覆盖' }}
+          </button>
+          <button
+            class="ui-button-primary disabled:opacity-50"
+            :disabled="searchingTimeline || !timeSearch.cameraId"
+            @click="playSelectedTime"
+          >
+            播放所选时间
+          </button>
+        </div>
+
+        <p v-if="timelineError" class="mt-3 text-sm text-red-600">{{ timelineError }}</p>
+        <div v-else class="mt-4">
+          <div class="relative h-8 overflow-hidden rounded-md bg-slate-100" aria-label="录像覆盖时间轴">
+            <button
+              v-for="(part, index) in coverageParts"
+              :key="`${part.type}-${part.start_time}-${index}`"
+              type="button"
+              class="absolute top-0 h-full border-r border-white/70"
+              :class="part.type === 'recording' ? 'bg-emerald-400 hover:bg-emerald-500' : 'bg-slate-200 cursor-default'"
+              :style="{ left: `${part.startPercent}%`, width: `${part.widthPercent}%` }"
+              :title="coverageTitle(part)"
+              :aria-label="coverageTitle(part)"
+              @click="selectCoveragePart(part)"
+            ></button>
+            <span
+              v-if="selectedTimePercent !== null"
+              class="absolute top-0 h-full w-0.5 bg-red-600"
+              :style="{ left: `${selectedTimePercent}%` }"
+              aria-label="所选播放时间"
+            ></span>
+          </div>
+          <div class="mt-2 flex flex-wrap items-center justify-between text-xs text-slate-500">
+            <div class="compat-flex-gap-3">
+              <span><span class="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400 mr-1"></span>可播放录像</span>
+              <span><span class="inline-block w-2.5 h-2.5 rounded-sm bg-slate-200 mr-1"></span>录像空档</span>
+            </div>
+            <span>单次查询最多 24 小时</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 加载中 -->
       <div v-if="loading" class="text-center py-12 text-slate-500">加载中...</div>
 
@@ -137,7 +207,7 @@
                 <div class="compat-flex-gap-1 justify-end">
                   <button
                     v-if="rec.status === 'completed'"
-                    @click="previewRecording(rec)"
+                    @click="openRecordingPreview(rec)"
                     class="ui-icon-button"
                     title="预览"
                     aria-label="预览"
@@ -145,7 +215,7 @@
                     <AppIcon name="eye" class="w-3.5 h-3.5" />
                   </button>
                   <a
-                    v-if="rec.status === 'completed'"
+                    v-if="rec.status === 'completed' && !isSegmentedRecording(rec)"
                     :href="downloadUrl(rec.id)"
                     :download="`recording_${rec.id}.${rec.format || 'mp4'}`"
                     class="ui-icon-button text-primary-700"
@@ -154,6 +224,17 @@
                   >
                     <AppIcon name="download" class="w-3.5 h-3.5" />
                   </a>
+                  <button
+                    v-else-if="rec.status === 'completed'"
+                    type="button"
+                    class="ui-button-secondary compat-flex-gap-1 opacity-50 cursor-not-allowed"
+                    disabled
+                    title="导出尚未实现"
+                    aria-label="导出尚未实现"
+                  >
+                    <AppIcon name="download" class="w-3.5 h-3.5" />
+                    <span>导出</span>
+                  </button>
                   <button
                     v-if="rec.status === 'recording'"
                     @click="handleStopRecording(rec)"
@@ -291,11 +372,70 @@
       </div>
     </template>
 
-    <!-- 预览对话框 -->
+    <!-- 按时间播放对话框 -->
+    <div
+      v-if="timePlaybackOpen"
+      class="ui-modal-backdrop bg-black/80"
+      @click.self="closeTimePlayback"
+    >
+      <div class="ui-modal max-w-3xl overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+          <div>
+            <h3 class="font-semibold text-slate-800">按时间播放录像</h3>
+            <p v-if="playbackState.point" class="text-xs text-slate-500">
+              {{ cameraName(timeSearch.cameraId) }} ·
+              {{ formatTime(playbackState.point.segment.start_time) }} -
+              {{ formatTime(playbackState.point.segment.end_time) }}
+            </p>
+          </div>
+          <button class="ui-icon-button" title="关闭" aria-label="关闭" @click="closeTimePlayback">
+            <AppIcon name="close" class="w-4 h-4" />
+          </button>
+        </div>
+        <div class="relative compat-aspect-video bg-black flex items-center justify-center">
+          <video
+            :ref="(element) => attachPlaybackVideo(0, element)"
+            v-show="playbackState.activeSlot === 0 && !playbackState.gap"
+            controls
+            :autoplay="playbackState.activeSlot === 0"
+            preload="auto"
+            class="max-w-full max-h-full"
+            @loadedmetadata="handlePlaybackMetadata(0)"
+            @canplay="handlePlaybackCanPlay(0)"
+            @ended="handlePlaybackEnded(0)"
+          ></video>
+          <video
+            :ref="(element) => attachPlaybackVideo(1, element)"
+            v-show="playbackState.activeSlot === 1 && !playbackState.gap"
+            controls
+            :autoplay="playbackState.activeSlot === 1"
+            preload="auto"
+            class="max-w-full max-h-full"
+            @loadedmetadata="handlePlaybackMetadata(1)"
+            @canplay="handlePlaybackCanPlay(1)"
+            @ended="handlePlaybackEnded(1)"
+          ></video>
+          <div v-if="playbackState.loading" class="absolute inset-0 flex items-center justify-center text-sm text-white bg-black/70">
+            正在定位录像...
+          </div>
+          <div v-else-if="playbackState.gap" class="absolute inset-0 flex items-center justify-center text-sm text-white bg-black/70">
+            所选时间是录像空档
+          </div>
+          <div v-else-if="playbackState.error" class="absolute inset-0 flex items-center justify-center px-6 text-sm text-red-200 bg-black/70">
+            {{ playbackState.error }}
+          </div>
+          <div v-else-if="playbackState.loadingNext" class="absolute inset-x-0 bottom-0 py-2 text-center text-xs text-white bg-black/60">
+            正在缓冲下一片段...
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 旧版单文件预览对话框 -->
     <div
       v-if="previewRec"
       class="ui-modal-backdrop bg-black/80"
-      @click.self="previewRec = null"
+      @click.self="closeLegacyPreview"
     >
       <div class="ui-modal max-w-3xl overflow-hidden">
         <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200">
@@ -304,7 +444,7 @@
             <p class="text-xs text-slate-500">{{ cameraName(previewRec.camera_id) }} · {{ formatTime(previewRec.start_time) }}</p>
           </div>
           <button
-            @click="previewRec = null"
+            @click="closeLegacyPreview"
             class="ui-icon-button"
             title="关闭"
             aria-label="关闭"
@@ -448,12 +588,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import AppIcon from '../components/AppIcon.vue'
 import {
   listCameras, listRecordings, stopRecording, deleteRecording,
   listSchedules, createSchedule, updateSchedule, deleteSchedule,
-  connectEventBus,
+  connectEventBus, getRecordingTimeline, resolveRecordingPlayback,
+  getSegmentMediaUrl, normalizeRecordingSearch, buildRecordingCoverage,
+  createRecordingPlaybackCoordinator,
 } from '../api'
 
 const activeTab = ref('recordings')
@@ -465,11 +607,39 @@ const previewRec = ref(null)
 const schedules = ref([])
 const showScheduleDialog = ref(false)
 const savingSchedule = ref(false)
+const timelineSegments = ref([])
+const coverageParts = ref([])
+const searchingTimeline = ref(false)
+const timelineError = ref('')
+const timePlaybackOpen = ref(false)
+const playbackState = ref({
+  activeSlot: 0,
+  point: null,
+  gap: false,
+  error: '',
+  loading: false,
+  loadingNext: false,
+})
 let eventWs = null
 
 const filter = reactive({
   cameraId: null,
   status: '',
+})
+
+const timeSearch = reactive({
+  cameraId: null,
+  from: '',
+  to: '',
+  at: '',
+})
+
+const playbackCoordinator = createRecordingPlaybackCoordinator({
+  resolvePlayback: resolveRecordingPlayback,
+  mediaUrl: getSegmentMediaUrl,
+  onStateChange: (state) => {
+    playbackState.value = state
+  },
 })
 
 const pageSize = 20
@@ -524,8 +694,10 @@ const loadSchedules = async () => {
 
 onMounted(async () => {
   await loadCameras()
+  initializeTimeSearch()
   await loadRecordings()
   await loadSchedules()
+  if (timeSearch.cameraId) await searchTimeline()
 
   eventWs = connectEventBus((event) => {
     if (event.type === 'recording_status') {
@@ -536,6 +708,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (eventWs) eventWs.close()
+  playbackCoordinator.close()
 })
 
 const goPage = (p) => {
@@ -596,6 +769,107 @@ const formatSize = (bytes) => {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
+const toDatetimeLocal = (value) => {
+  const date = value instanceof Date ? value : new Date(value)
+  const pad = (number) => String(number).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+const initializeTimeSearch = () => {
+  const to = new Date()
+  const from = new Date(to.getTime() - 60 * 60 * 1000)
+  timeSearch.cameraId = filter.cameraId || cameras.value[0]?.id || null
+  timeSearch.from = toDatetimeLocal(from)
+  timeSearch.to = toDatetimeLocal(to)
+  timeSearch.at = toDatetimeLocal(from)
+}
+
+const normalizedTimeSearch = () => normalizeRecordingSearch(timeSearch)
+
+const searchTimeline = async () => {
+  searchingTimeline.value = true
+  timelineError.value = ''
+  try {
+    const params = normalizedTimeSearch()
+    const data = await getRecordingTimeline({
+      camera_id: params.camera_id,
+      from: params.from,
+      to: params.to,
+    })
+    timelineSegments.value = data.segments || []
+    coverageParts.value = buildRecordingCoverage(timelineSegments.value, params.from, params.to)
+    return true
+  } catch (err) {
+    timelineSegments.value = []
+    coverageParts.value = []
+    timelineError.value = err.response?.data?.message || err.message || '录像覆盖查询失败'
+    return false
+  } finally {
+    searchingTimeline.value = false
+  }
+}
+
+const selectedTimePercent = computed(() => {
+  const from = new Date(timeSearch.from).getTime()
+  const to = new Date(timeSearch.to).getTime()
+  const at = new Date(timeSearch.at).getTime()
+  if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(at) || to <= from || at < from || at > to) {
+    return null
+  }
+  return ((at - from) / (to - from)) * 100
+})
+
+const coverageTitle = (part) => {
+  const label = part.type === 'recording' ? '可播放录像' : '录像空档'
+  return `${label}: ${formatTime(part.start_time)} - ${formatTime(part.end_time)}`
+}
+
+const selectCoveragePart = (part) => {
+  const midpoint = (new Date(part.start_time).getTime() + new Date(part.end_time).getTime()) / 2
+  timeSearch.at = toDatetimeLocal(new Date(midpoint))
+}
+
+const attachPlaybackVideo = (slot, video) => {
+  playbackCoordinator.attach(slot, video)
+}
+
+const handlePlaybackMetadata = (slot) => playbackCoordinator.loadedMetadata(slot)
+const handlePlaybackCanPlay = (slot) => playbackCoordinator.canPlay(slot)
+const handlePlaybackEnded = (slot) => playbackCoordinator.ended(slot)
+
+const playSelectedTime = async () => {
+  const valid = await searchTimeline()
+  if (!valid) return
+  const params = normalizedTimeSearch()
+  timePlaybackOpen.value = true
+  await nextTick()
+  await playbackCoordinator.open({
+    cameraId: params.camera_id,
+    at: params.at,
+    segments: timelineSegments.value,
+  })
+}
+
+const openTimePlayback = async (rec) => {
+  if (rec) {
+    const start = new Date(rec.start_time)
+    const recordedDuration = Math.max(60 * 1000, Number(rec.duration || 0) * 1000)
+    const end = new Date(start.getTime() + Math.min(recordedDuration, 24 * 60 * 60 * 1000))
+    timeSearch.cameraId = rec.camera_id
+    timeSearch.from = toDatetimeLocal(start)
+    timeSearch.to = toDatetimeLocal(end)
+    timeSearch.at = toDatetimeLocal(start)
+  }
+  await playSelectedTime()
+}
+
+const closeTimePlayback = () => {
+  playbackCoordinator.close()
+  timePlaybackOpen.value = false
+}
+
+const isSegmentedRecording = (rec) => rec.storage_mode === 'segmented'
+
 const downloadUrl = (id) => {
   const token = localStorage.getItem('token')
   return `/api/v1/recordings/${id}/download?token=${token}`
@@ -603,6 +877,18 @@ const downloadUrl = (id) => {
 
 const previewRecording = (rec) => {
   previewRec.value = rec
+}
+
+const openRecordingPreview = (rec) => {
+  if (isSegmentedRecording(rec)) {
+    openTimePlayback(rec)
+    return
+  }
+  previewRecording(rec)
+}
+
+const closeLegacyPreview = () => {
+  previewRec.value = null
 }
 
 const handleStopRecording = async (rec) => {
