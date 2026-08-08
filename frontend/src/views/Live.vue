@@ -17,6 +17,55 @@
         <span>{{ nowStr }}</span>
       </div>
       <div class="compat-flex-gap-3 ml-auto">
+        <!-- 摄像头选择器 -->
+        <div class="relative">
+          <button
+            type="button"
+            class="ui-button-secondary compat-flex-gap-1"
+            :aria-expanded="showCameraPicker"
+            aria-controls="live-camera-picker"
+            @click="showCameraPicker = !showCameraPicker"
+          >
+            <AppIcon name="camera" class="w-4 h-4" />
+            <span>选择摄像头</span>
+            <span class="text-xs text-slate-500">{{ cameraSelectionLabel }}</span>
+          </button>
+          <div
+            v-if="showCameraPicker"
+            id="live-camera-picker"
+            class="absolute right-0 top-full z-20 mt-2 w-72 ui-card p-3"
+          >
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-sm font-semibold text-slate-800">显示的摄像头</span>
+              <button type="button" class="ui-icon-button" aria-label="关闭摄像头选择" @click="showCameraPicker = false">
+                <AppIcon name="close" class="w-4 h-4" />
+              </button>
+            </div>
+            <div class="max-h-56 overflow-y-auto border-y border-slate-100 py-1">
+              <label
+                v-for="cam in cameras"
+                :key="cam.id"
+                class="flex items-center px-2 py-2 rounded-md cursor-pointer hover:bg-slate-50"
+              >
+                <input
+                  type="checkbox"
+                  :checked="isCameraSelected(cam.id)"
+                  class="w-4 h-4 text-primary-600 rounded"
+                  @change="toggleCameraSelection(cam.id)"
+                />
+                <span class="ml-2 min-w-0 flex-1">
+                  <span class="block text-sm text-slate-700 truncate">{{ cam.name }}</span>
+                  <span class="block text-xs text-slate-400 truncate">{{ cam.ip }}</span>
+                </span>
+                <span class="w-2 h-2 rounded-full" :class="cam.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'"></span>
+              </label>
+            </div>
+            <div class="compat-flex-gap-2 justify-between mt-3">
+              <button type="button" class="ui-button-secondary" @click="clearCameraSelection">清空</button>
+              <button type="button" class="ui-button-primary" @click="selectAllCameras">全部显示</button>
+            </div>
+          </div>
+        </div>
         <!-- 网格切换 -->
         <div class="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
           <button
@@ -54,6 +103,15 @@
           <AppIcon name="camera" class="w-14 h-14 mx-auto mb-3 text-slate-300" />
           <p class="text-sm text-slate-500">暂无摄像头</p>
           <router-link to="/cameras" class="text-primary-600 hover:text-primary-500 text-sm mt-2 inline-block">去添加 →</router-link>
+        </div>
+      </div>
+
+      <!-- 尚未选择摄像头 -->
+      <div v-else-if="visibleCameras.length === 0" class="h-full flex items-center justify-center text-slate-400">
+        <div class="text-center">
+          <AppIcon name="camera" class="w-14 h-14 mx-auto mb-3 text-slate-300" />
+          <p class="text-sm text-slate-600">尚未选择用于预览的摄像头</p>
+          <button type="button" class="ui-button-primary mt-4" @click="showCameraPicker = true">选择摄像头</button>
         </div>
       </div>
 
@@ -262,6 +320,8 @@ import AppIcon from '../components/AppIcon.vue'
 const cameras = ref([])
 const loading = ref(true)
 const gridSize = ref(4)
+const selectedCameraIDs = ref(null)
+const showCameraPicker = ref(false)
 const streaming = ref({})
 const starting = ref({})
 const recording = ref({})
@@ -293,10 +353,18 @@ const updateClock = () => {
 updateClock()
 
 const onlineCount = computed(() => cameras.value.filter((c) => c.status === 'online').length)
-const visibleCameras = computed(() => cameras.value.slice(0, gridSize.value))
+const selectedCameras = computed(() => {
+  if (selectedCameraIDs.value === null) return cameras.value
+  return cameras.value.filter((camera) => selectedCameraIDs.value.includes(camera.id))
+})
+const visibleCameras = computed(() => selectedCameras.value.slice(0, gridSize.value))
+const cameraSelectionLabel = computed(() => {
+  if (selectedCameraIDs.value === null) return '全部'
+  return `已选 ${selectedCameraIDs.value.length} 台`
+})
 
 const gridStyle = computed(() => {
-  const n = gridSize.value
+  const n = Math.max(1, visibleCameras.value.length)
   const cols = n === 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4
   const rows = Math.ceil(n / cols)
   return {
@@ -310,6 +378,26 @@ const gridLabel = (n) => {
   if (n === 4) return '2×2'
   if (n === 9) return '3×3'
   return '4×4'
+}
+
+const isCameraSelected = (cameraId) => selectedCameraIDs.value === null || selectedCameraIDs.value.includes(cameraId)
+
+const toggleCameraSelection = (cameraId) => {
+  const selected = selectedCameraIDs.value === null
+    ? cameras.value.map((camera) => camera.id)
+    : selectedCameraIDs.value.slice()
+  const index = selected.indexOf(cameraId)
+  if (index === -1) selected.push(cameraId)
+  else selected.splice(index, 1)
+  selectedCameraIDs.value = selected
+}
+
+const clearCameraSelection = () => {
+  selectedCameraIDs.value = []
+}
+
+const selectAllCameras = () => {
+  selectedCameraIDs.value = cameras.value.map((camera) => camera.id)
 }
 
 // MJPEG URL 缓存：每个摄像头只生成一次，避免重渲染导致重新连接
@@ -326,6 +414,9 @@ const loadCameras = async () => {
   loading.value = true
   try {
     cameras.value = await listCameras()
+    if (selectedCameraIDs.value !== null) {
+      selectedCameraIDs.value = selectedCameraIDs.value.filter((id) => cameras.value.some((camera) => camera.id === id))
+    }
   } finally {
     loading.value = false
   }

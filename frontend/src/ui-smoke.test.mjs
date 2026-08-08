@@ -38,6 +38,14 @@ test('live view keeps media controls and applies the Chrome 72 aspect fallback',
   assert.match(live, /ui-modal/)
 })
 
+test('live view lets operators select the cameras shown in the preview grid', () => {
+  const live = readFileSync(new URL('./views/Live.vue', import.meta.url), 'utf8')
+  assert.match(live, /选择摄像头/)
+  assert.match(live, /selectedCameraIDs/)
+  assert.match(live, /toggleCameraSelection/)
+  assert.match(live, /clearCameraSelection/)
+})
+
 test('recordings view preserves recording and schedule actions in a responsive surface', () => {
   const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
   assert.match(recordings, /stopRecording/)
