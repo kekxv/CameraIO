@@ -10,6 +10,7 @@ on:
 # Keep every CI test on the same compiler-free build path as releases.
 env:
   CGO_ENABLED: "0"
+  CAMERAIO_SKIP_FFMPEG_DOWNLOAD: "1"
 
 jobs:
   # ===========================================

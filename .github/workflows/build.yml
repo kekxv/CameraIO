@@ -12,6 +12,7 @@ on:
 # and ensure a compiler is never required by the build runners.
 env:
   CGO_ENABLED: "0"
+  CAMERAIO_SKIP_FFMPEG_DOWNLOAD: "1"
 
 jobs:
   # ===========================================

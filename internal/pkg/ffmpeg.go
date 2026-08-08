@@ -90,6 +90,11 @@ func EnsureFFmpegAsync() bool {
 		return true
 	}
 
+	if os.Getenv("CAMERAIO_SKIP_FFMPEG_DOWNLOAD") == "1" {
+		setStatus(FFmpegStatus{State: "error", Error: "FFmpeg automatic download is disabled"})
+		return false
+	}
+
 	// 4. 后台下载（不阻塞启动）
 	log.Printf("[FFmpeg] 系统未安装 ffmpeg，后台开始自动下载...")
 	setStatus(FFmpegStatus{State: "downloading", Progress: 0})

@@ -2,10 +2,13 @@ package pkg
 
 import (
 	"archive/zip"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 func TestLocalPaths(t *testing.T) {
@@ -72,18 +75,54 @@ func TestDownloadInfo(t *testing.T) {
 	}
 }
 
-func TestEnsureFFmpeg_SystemPath(t *testing.T) {
-	// 如果系统已安装 ffmpeg，应该能找到
-	// 这个测试在有 ffmpeg 的环境下会通过，没有时会尝试下载
-	ffmpeg, ffprobe, err := EnsureFFmpeg()
+func TestEnsureFFmpegAsync_SkipsDownloadWhenDisabled(t *testing.T) {
+	statusMu.Lock()
+	previousFFmpegPath, previousFFprobePath, previousStatus := ffmpegPath, ffprobePath, status
+	ffmpegPath, ffprobePath, status = "", "", FFmpegStatus{}
+	statusMu.Unlock()
+	t.Cleanup(func() {
+		statusMu.Lock()
+		ffmpegPath, ffprobePath, status = previousFFmpegPath, previousFFprobePath, previousStatus
+		statusMu.Unlock()
+	})
+
+	originalWD, err := os.Getwd()
 	if err != nil {
-		t.Skipf("FFmpeg not available: %v", err)
+		t.Fatalf("get working directory: %v", err)
 	}
-	if ffmpeg == "" {
-		t.Error("ffmpeg path should not be empty")
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("change to temporary directory: %v", err)
 	}
-	if ffprobe == "" {
-		t.Error("ffprobe path should not be empty")
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWD); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+
+	proxyRequests := make(chan struct{}, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		select {
+		case proxyRequests <- struct{}{}:
+		default:
+		}
+	}))
+	defer proxy.Close()
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("CAMERAIO_SKIP_FFMPEG_DOWNLOAD", "1")
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("NO_PROXY", "")
+
+	if available := EnsureFFmpegAsync(); available {
+		t.Fatal("EnsureFFmpegAsync reported FFmpeg available without a configured binary")
+	}
+	if got := GetFFmpegStatus(); got.State != "error" {
+		t.Fatalf("FFmpeg status = %#v, want error without attempting a download", got)
+	}
+	select {
+	case <-proxyRequests:
+		t.Fatal("EnsureFFmpegAsync attempted an FFmpeg download while disabled")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
