@@ -73,9 +73,11 @@ func TestRecorderService_List_WithFilters(t *testing.T) {
 
 	// 创建测试录像记录
 	now := time.Now()
+	firstEnd := now.Add(-100 * time.Minute)
+	secondEnd := now.Add(-10 * time.Minute)
 	recs := []model.Recording{
-		{CameraID: 1, FilePath: "/tmp/r1.mp4", StartTime: now.Add(-2 * time.Hour), Status: model.RecordingStatusCompleted, FileSize: 1024},
-		{CameraID: 1, FilePath: "/tmp/r2.mp4", StartTime: now.Add(-1 * time.Hour), Status: model.RecordingStatusCompleted, FileSize: 2048},
+		{CameraID: 1, FilePath: "/tmp/r1.mp4", StartTime: now.Add(-2 * time.Hour), EndTime: &firstEnd, Status: model.RecordingStatusCompleted, FileSize: 1024},
+		{CameraID: 1, FilePath: "/tmp/r2.mp4", StartTime: now.Add(-1 * time.Hour), EndTime: &secondEnd, Status: model.RecordingStatusCompleted, FileSize: 2048},
 		{CameraID: 2, FilePath: "/tmp/r3.mp4", StartTime: now, Status: model.RecordingStatusRecording, FileSize: 0},
 	}
 	for i := range recs {

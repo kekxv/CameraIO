@@ -1004,10 +1004,10 @@ func (s *RecorderService) List(query RecordingQuery) ([]model.Recording, int64, 
 		db = db.Where("camera_id = ?", *query.CameraID)
 	}
 	if query.StartTime != nil {
-		db = db.Where("start_time >= ?", *query.StartTime)
+		db = db.Where("COALESCE(end_time, CURRENT_TIMESTAMP) > ?", query.StartTime.UTC())
 	}
 	if query.EndTime != nil {
-		db = db.Where("start_time <= ?", *query.EndTime)
+		db = db.Where("start_time < ?", query.EndTime.UTC())
 	}
 	if query.Status != nil {
 		db = db.Where("status = ?", *query.Status)
