@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +15,32 @@ import (
 	"CameraIO/internal/pkg"
 	"CameraIO/internal/service"
 )
+
+type recordingStartup interface {
+	ReconcileSegments() error
+	ReconcileLegacyOrphaned()
+	RunRetentionOnce() error
+	StartRetention()
+	StartSweep()
+}
+
+type scheduleStartup interface {
+	Start()
+}
+
+func startRecordingSubsystems(recorder recordingStartup, scheduler scheduleStartup) error {
+	if err := recorder.ReconcileSegments(); err != nil {
+		return fmt.Errorf("reconcile recording segments: %w", err)
+	}
+	recorder.ReconcileLegacyOrphaned()
+	if err := recorder.RunRetentionOnce(); err != nil {
+		return fmt.Errorf("run initial recording retention: %w", err)
+	}
+	recorder.StartRetention()
+	recorder.StartSweep()
+	scheduler.Start()
+	return nil
+}
 
 func main() {
 	cfg := pkg.LoadConfig()
@@ -63,10 +90,10 @@ func main() {
 	scheduleSvc := service.NewScheduleService(db, recorderSvc)
 
 	// 启动后台服务
-	recorderSvc.ReconcileOrphaned()
-	recorderSvc.StartSweep()
+	if err := startRecordingSubsystems(recorderSvc, scheduleSvc); err != nil {
+		log.Fatalf("start recording services: %v", err)
+	}
 	monitor.Start()
-	scheduleSvc.Start()
 	if err := gb28181Svc.Start(); err != nil {
 		log.Printf("[GB28181] failed to start SIP server: %v", err)
 	}

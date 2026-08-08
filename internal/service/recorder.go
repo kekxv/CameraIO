@@ -33,9 +33,12 @@ type RecorderService struct {
 	streams *StreamService // 用于 GB28181 录像（从 NALU 流录制）
 	events  *EventBus
 
-	segmentCommand segmentCommandFactory
-	probeAAC       func(context.Context, string) (bool, error)
-	segmentProbe   segmentDurationProbe
+	segmentCommand    segmentCommandFactory
+	probeAAC          func(context.Context, string) (bool, error)
+	segmentProbe      segmentDurationProbe
+	diskStat          func(string) (diskUsage, error)
+	retentionNow      func() time.Time
+	retentionInterval time.Duration
 }
 
 type recordTask struct {
@@ -60,11 +63,12 @@ type recordTask struct {
 func NewRecorderService(db *gorm.DB, cfg *pkg.Config) *RecorderService {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RecorderService{
-		db:     db,
-		cfg:    cfg,
-		tasks:  make(map[uint]*recordTask),
-		ctx:    ctx,
-		cancel: cancel,
+		db:       db,
+		cfg:      cfg,
+		tasks:    make(map[uint]*recordTask),
+		ctx:      ctx,
+		cancel:   cancel,
+		diskStat: statDiskUsage,
 	}
 }
 
@@ -261,6 +265,9 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	}
 	if in.Bitrate > 0 {
 		return nil, &RecordingValidationError{Message: "bitrate must be 0 for resource-safe stream-copy recording"}
+	}
+	if err := s.checkRecordingAdmission(in.CameraID); err != nil {
+		return nil, err
 	}
 
 	now := time.Now().UTC()
@@ -838,8 +845,18 @@ func (s *RecorderService) recoverSegmentedRecording(recording *model.Recording) 
 // ReconcileOrphaned 清理孤儿录像记录：状态为 recording/failed 但 FFmpeg 进程已不存在。
 // 服务启动时调用。文件有效则标记 completed（可下载查看），否则标记 failed。
 func (s *RecorderService) ReconcileOrphaned() {
+	if err := s.ReconcileSegments(); err != nil {
+		log.Printf("[recorder] reconcile segmented recordings: %v", err)
+	}
+	s.ReconcileLegacyOrphaned()
+}
+
+// ReconcileLegacyOrphaned preserves startup recovery for pre-segmented
+// single-file recordings. Segmented recovery is exclusively handled by
+// ReconcileSegments so paths outside the configured root are never scanned.
+func (s *RecorderService) ReconcileLegacyOrphaned() {
 	var recs []model.Recording
-	if err := s.db.Where("status IN ?", []string{model.RecordingStatusRecording, model.RecordingStatusFailed}).Find(&recs).Error; err != nil {
+	if err := s.db.Where("status IN ? AND (storage_mode IS NULL OR storage_mode <> ?)", []string{model.RecordingStatusRecording, model.RecordingStatusFailed}, model.StorageModeSegmented).Find(&recs).Error; err != nil {
 		log.Printf("[recorder] reconcile orphaned: %v", err)
 		return
 	}
@@ -852,13 +869,6 @@ func (s *RecorderService) ReconcileOrphaned() {
 		if active {
 			continue // 仍在录制
 		}
-		if rec.StorageMode == model.StorageModeSegmented {
-			if err := s.recoverSegmentedRecording(&rec); err != nil {
-				log.Printf("[recorder] recover orphaned segmented recording %d: %v", rec.ID, err)
-			}
-			continue
-		}
-
 		// 检查文件是否有效
 		var fileSize int64
 		if info, err := os.Stat(rec.FilePath); err == nil {

@@ -730,9 +730,9 @@ func TestRecorderRestartRecoveryRebuildsAggregateFromKnownSegmentRows(t *testing
 func TestRecorderReconcileSegmentedDirectoryWithoutPlayableFilesMarksFailed(t *testing.T) {
 	db, cleanup := setupRecorderTestDB(t)
 	defer cleanup()
+	root := t.TempDir()
 	recording := &model.Recording{
 		CameraID:    14,
-		FilePath:    t.TempDir(),
 		StartTime:   time.Now().Add(-time.Minute).UTC(),
 		Status:      model.RecordingStatusRecording,
 		Format:      model.FormatMP4,
@@ -741,7 +741,16 @@ func TestRecorderReconcileSegmentedDirectoryWithoutPlayableFilesMarksFailed(t *t
 	if err := db.Create(recording).Error; err != nil {
 		t.Fatalf("create recording: %v", err)
 	}
-	svc := NewRecorderService(db, pkg.DefaultConfig())
+	sessionDir := filepath.Join(root, fmt.Sprint(recording.CameraID), fmt.Sprint(recording.ID))
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("create recording session directory: %v", err)
+	}
+	if err := db.Model(recording).Update("file_path", sessionDir).Error; err != nil {
+		t.Fatalf("store recording session directory: %v", err)
+	}
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = root
+	svc := NewRecorderService(db, cfg)
 	svc.ReconcileOrphaned()
 
 	var recovered model.Recording
