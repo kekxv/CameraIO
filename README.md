@@ -110,6 +110,53 @@ viewing, and m3u8 is not used for live viewing. Continuous archive recording
 uses MP4 stream-copy; WebM is legacy/manual only. Plan storage capacity at
 approximately 1 Mbps ≈ 10.8 GB/day/camera.
 
+### 单机录像验收与部署上限
+
+不要以估算的摄像头数量作为这台 i5 主机的部署上限。每次部署到目标主机，使用
+Linux 或 Windows 验收脚本产生一份带时间戳的证据日志；脚本运行构建/浏览器测试，
+生成五分钟的 FFmpeg 分段样本并逐个用 `ffprobe` 验证可播放，也可检查实际录像目录
+和 SQLite `recording_segments` 的相邻时间间隙（不得超过两秒）：
+
+```bash
+scripts/verify-single-host-recording.sh \
+  --camera-url 'rtsp://camera/substream' \
+  --segments-dir data/recordings/RECORDING_ID \
+  --database data/cameradio.db \
+  --latency-baseline baseline-ms.txt \
+  --latency-recording recording-ms.txt \
+  --resource-samples resource-samples.csv
+```
+
+```powershell
+.\scripts\verify-single-host-recording.ps1 -CameraUrl 'rtsp://camera/substream' `
+  -SegmentsDir data\recordings\RECORDING_ID -Database data\cameradio.db `
+  -LatencyBaseline baseline-ms.txt -LatencyRecording recording-ms.txt `
+  -ResourceSamples resource-samples.csv
+```
+
+`baseline-ms.txt` 和 `recording-ms.txt` 各有至少 30 行，每行是一次玻璃到玻璃
+延迟（毫秒）。将一个摄像头对准另一块屏幕上的毫秒时钟，并在同一手机画面内拍到
+实体时钟和 CameraIO 预览：先收集未录像的 30 次样本，再在连续分段录像时收集
+30 次。每个样本必须小于 1000 ms，录像期间 p95 相对基线增加不得超过 100 ms。
+
+`resource-samples.csv` 的表头为
+`host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent`。在全部必要摄像头
+持续录像且打开正常数量预览格的情况下，完成 30 分钟正常自助服务流程；记录定期
+样本并确认自助服务没有新增超时/错误、录制 FFmpeg 处于低于普通优先级、每流录像
+CPU 小于 5%、主机持续 CPU 小于 70%、可用磁盘大于 15%。
+
+在回放中，分别选择每个会话开始、中间、最后一秒，及两段相邻片段的精确边界。核对
+正确墙钟内容打开、seek 误差最多一 GOP（配置上限一秒）、自动越界暂停最多 250 ms。
+故意制造的真实录像间隙必须显示，不可悄悄跳过。资源门槛失败时，仅依次调整摄像头
+H.264 子码流、相机侧 VBR、10–15 fps、一秒 GOP、再降低源码率/分辨率；不要启用服务端
+WebM/VP9 或 H.264 软件转码。
+
+将实测值填入下表并与脚本日志一起保存；所有字段为空时，表示该主机尚未获得部署批准。
+
+| 验收日期/日志 | 最大同时录像摄像头 | 最大预览格 | 每相机码率 | 保留天数 / 磁盘容量 | 基线/录像 p95 与最大延迟 | 主机 CPU |
+|---|---:|---:|---:|---:|---|---:|
+| 未测量 | 未测量 | 未测量 | 未测量 | 未测量 | 未测量 | 未测量 |
+
 ### 首次运行
 
 系统会自动：
