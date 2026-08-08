@@ -113,3 +113,40 @@ func TestRecordingPersistenceNormalizesTimesToUTC(t *testing.T) {
 		assertUTC(name, got.got, got.want)
 	}
 }
+
+func TestRecordingSegmentPersistenceAssignsZeroCreatedAtInUTC(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	segment := model.RecordingSegment{
+		RecordingID: 1,
+		CameraID:    2,
+		Sequence:    1,
+		FilePath:    "/archive/zero-created-at.mp4",
+		StartTime:   now,
+		EndTime:     now.Add(5 * time.Minute),
+		Status:      model.RecordingStatusCompleted,
+		Format:      model.FormatMP4,
+	}
+	if err := db.Create(&segment).Error; err != nil {
+		t.Fatal(err)
+	}
+	if segment.CreatedAt.IsZero() {
+		t.Fatal("created_at must be assigned")
+	}
+	if segment.CreatedAt.Location() != time.UTC {
+		t.Errorf("created_at after create location = %s, want UTC", segment.CreatedAt.Location())
+	}
+
+	var persisted model.RecordingSegment
+	if err := db.First(&persisted, segment.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !persisted.CreatedAt.Equal(segment.CreatedAt) {
+		t.Errorf("created_at instant = %s, want %s", persisted.CreatedAt, segment.CreatedAt)
+	}
+	if persisted.CreatedAt.Location() != time.UTC {
+		t.Errorf("created_at after reload location = %s, want UTC", persisted.CreatedAt.Location())
+	}
+}

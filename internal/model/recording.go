@@ -82,6 +82,15 @@ func (s *RecordingSegment) BeforeSave(_ *gorm.DB) error {
 	return nil
 }
 
+// BeforeCreate assigns a UTC creation timestamp before GORM's automatic
+// timestamp callback can assign a local-time value.
+func (s *RecordingSegment) BeforeCreate(tx *gorm.DB) error {
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = tx.NowFunc().UTC()
+	}
+	return nil
+}
+
 // AfterFind ensures callers receive recording segment timestamps in UTC.
 func (s *RecordingSegment) AfterFind(_ *gorm.DB) error {
 	s.normalizeTimesUTC()
