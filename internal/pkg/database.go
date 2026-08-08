@@ -51,6 +51,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 			&model.User{},
 			&model.Camera{},
 			&model.Recording{},
+			&model.RecordingSegment{},
 			&model.RecordingSchedule{},
 		); err != nil {
 			initErr = fmt.Errorf("auto migrate: %w", err)
@@ -96,6 +97,7 @@ func MigrateDB(conn *gorm.DB) error {
 		&model.User{},
 		&model.Camera{},
 		&model.Recording{},
+		&model.RecordingSegment{},
 		&model.RecordingSchedule{},
 	)
 }

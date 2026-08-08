@@ -16,9 +16,33 @@ type Recording struct {
 	Status      string     `json:"status" gorm:"type:varchar(16);default:recording"`
 	Format      string     `json:"format" gorm:"type:varchar(8);default:mp4"`
 	WithAudio   bool       `json:"with_audio" gorm:"default:false"`
+	StorageMode string     `json:"storage_mode" gorm:"type:varchar(16);default:legacy"`
 
 	Camera *Camera `json:"camera,omitempty" gorm:"foreignKey:CameraID"`
 }
+
+// RecordingSegment is a physical file belonging to a logical recording
+// session. DurationMS avoids the loss of precision inherent in whole-second
+// durations when calculating offsets across segments.
+type RecordingSegment struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	RecordingID uint      `json:"recording_id" gorm:"not null;uniqueIndex:idx_recording_segments_recording_sequence,priority:1"`
+	CameraID    uint      `json:"camera_id" gorm:"not null;index:idx_recording_segments_camera_start_time,priority:1;index:idx_recording_segments_camera_end_time,priority:1"`
+	Sequence    int       `json:"sequence" gorm:"not null;uniqueIndex:idx_recording_segments_recording_sequence,priority:2"`
+	FilePath    string    `json:"file_path" gorm:"type:varchar(255);not null;uniqueIndex"`
+	FileSize    int64     `json:"file_size" gorm:"default:0"`
+	StartTime   time.Time `json:"start_time" gorm:"not null;index:idx_recording_segments_camera_start_time,priority:2"`
+	EndTime     time.Time `json:"end_time" gorm:"index:idx_recording_segments_camera_end_time,priority:2"`
+	DurationMS  int64     `json:"duration_ms" gorm:"default:0"`
+	Status      string    `json:"status" gorm:"type:varchar(16);default:recording"`
+	Format      string    `json:"format" gorm:"type:varchar(8);default:mp4"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+const (
+	StorageModeLegacy    = "legacy"
+	StorageModeSegmented = "segmented"
+)
 
 const (
 	TriggerAPI      = "api"

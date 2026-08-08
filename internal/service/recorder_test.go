@@ -26,7 +26,7 @@ func setupRecorderTestDB(t *testing.T) (*gorm.DB, func()) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	db.AutoMigrate(&model.Recording{}, &model.Camera{})
+	db.AutoMigrate(&model.Recording{}, &model.RecordingSegment{}, &model.Camera{})
 	return db, func() {
 		sqlDB, _ := db.DB()
 		sqlDB.Close()
