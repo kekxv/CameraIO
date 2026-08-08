@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,6 +85,11 @@ func (s *RecorderService) ReconcileSegments() error {
 	if err != nil {
 		return fmt.Errorf("read recordings root: %w", err)
 	}
+	rootIdentity, err := canonicalFilesystemPath(root)
+	if err != nil {
+		return fmt.Errorf("canonicalize recordings root: %w", err)
+	}
+	processed := make(map[uint]struct{})
 	for _, cameraEntry := range cameraEntries {
 		if !cameraEntry.IsDir() {
 			continue
@@ -112,19 +119,94 @@ func (s *RecorderService) ReconcileSegments() error {
 				return fmt.Errorf("load recording session %d: %w", recordingID, err)
 			}
 			sessionDir := filepath.Join(cameraDir, sessionEntry.Name())
-			storedDir, err := filepath.Abs(recording.FilePath)
-			if err != nil || filepath.Clean(storedDir) != filepath.Clean(sessionDir) {
+			storedIdentity, storedErr := canonicalFilesystemPath(recording.FilePath)
+			sessionIdentity, sessionErr := canonicalFilesystemPath(sessionDir)
+			if storedErr != nil || sessionErr != nil || storedIdentity != sessionIdentity || !pathWithinRoot(rootIdentity, sessionIdentity) {
 				continue
 			}
 			if err := s.reconcileSegmentDirectory(&recording, sessionDir); err != nil {
 				return err
 			}
+			processed[recording.ID] = struct{}{}
+		}
+	}
+
+	var recordings []model.Recording
+	if err := s.db.Where("storage_mode = ?", model.StorageModeSegmented).Find(&recordings).Error; err != nil {
+		return fmt.Errorf("load segmented recordings for reconciliation: %w", err)
+	}
+	for index := range recordings {
+		recording := &recordings[index]
+		if _, alreadyProcessed := processed[recording.ID]; alreadyProcessed {
+			continue
+		}
+		expectedSession := filepath.Join(root, strconv.FormatUint(uint64(recording.CameraID), 10), strconv.FormatUint(uint64(recording.ID), 10))
+		expectedIdentity, expectedErr := canonicalFilesystemPath(expectedSession)
+		storedIdentity, storedErr := canonicalFilesystemPath(recording.FilePath)
+		if expectedErr != nil || storedErr != nil || expectedIdentity != storedIdentity || !pathWithinRoot(rootIdentity, expectedIdentity) {
+			continue
+		}
+		info, statErr := os.Lstat(expectedSession)
+		switch {
+		case statErr == nil && info.IsDir():
+			if err := s.reconcileSegmentDirectory(recording, expectedSession); err != nil {
+				return err
+			}
+		case os.IsNotExist(statErr):
+			if err := s.reconcileMissingSegmentDirectory(recording, expectedIdentity, rootIdentity); err != nil {
+				return err
+			}
+		case statErr != nil:
+			return fmt.Errorf("inspect recording session %d: %w", recording.ID, statErr)
+		default:
+			return fmt.Errorf("recording session %d is not a directory", recording.ID)
 		}
 	}
 	return nil
 }
 
+func (s *RecorderService) reconcileMissingSegmentDirectory(recording *model.Recording, sessionIdentity, rootIdentity string) error {
+	var segments []model.RecordingSegment
+	if err := s.db.Where("recording_id = ?", recording.ID).Find(&segments).Error; err != nil {
+		return fmt.Errorf("load missing recording %d segments: %w", recording.ID, err)
+	}
+	for index := range segments {
+		segment := &segments[index]
+		identity, err := canonicalFilesystemPath(segment.FilePath)
+		if err != nil {
+			return fmt.Errorf("canonicalize missing segment %s: %w", segment.FilePath, err)
+		}
+		if filepath.Dir(identity) != sessionIdentity || !pathWithinRoot(rootIdentity, identity) {
+			return fmt.Errorf("refuse missing segment outside recording session %d: %s", recording.ID, segment.FilePath)
+		}
+		if _, err := os.Lstat(segment.FilePath); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect missing segment %s: %w", segment.FilePath, err)
+		}
+		if err := s.db.Model(segment).Updates(map[string]any{
+			"file_size":   0,
+			"duration_ms": 0,
+			"status":      model.RecordingStatusFailed,
+		}).Error; err != nil {
+			return fmt.Errorf("mark missing segment %s failed: %w", segment.FilePath, err)
+		}
+	}
+	if err := s.recomputeRecordingAggregate(s.db, recording.ID); err != nil {
+		return err
+	}
+	return s.finalizeReconciledRecording(recording)
+}
+
 func (s *RecorderService) reconcileSegmentDirectory(recording *model.Recording, sessionDir string) error {
+	sessionIdentity, err := canonicalFilesystemPath(sessionDir)
+	if err != nil {
+		return fmt.Errorf("canonicalize recording session %d: %w", recording.ID, err)
+	}
+	rootIdentity, err := canonicalFilesystemPath(s.cfg.RecordingsDir)
+	if err != nil {
+		return fmt.Errorf("canonicalize recordings root: %w", err)
+	}
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
 		return fmt.Errorf("read recording session %d: %w", recording.ID, err)
@@ -146,11 +228,11 @@ func (s *RecorderService) reconcileSegmentDirectory(recording *model.Recording, 
 	for index := range indexed {
 		segment := &indexed[index]
 		usedSequences[segment.Sequence] = struct{}{}
-		if filepath.Clean(filepath.Dir(segment.FilePath)) != filepath.Clean(sessionDir) ||
-			!strings.EqualFold(filepath.Ext(segment.FilePath), ".mp4") {
+		segmentIdentity, identityErr := canonicalFilesystemPath(segment.FilePath)
+		if identityErr != nil || filepath.Dir(segmentIdentity) != sessionIdentity || !strings.EqualFold(filepath.Ext(segment.FilePath), ".mp4") {
 			continue
 		}
-		indexedByPath[segment.FilePath] = segment
+		indexedByPath[segmentIdentity] = segment
 		if _, err := os.Lstat(segment.FilePath); os.IsNotExist(err) {
 			if err := s.db.Model(segment).Updates(map[string]any{
 				"file_size":   0,
@@ -169,6 +251,13 @@ func (s *RecorderService) reconcileSegmentDirectory(recording *model.Recording, 
 		probe = probeSegmentDuration
 	}
 	for index, path := range paths {
+		pathIdentity, err := canonicalFilesystemPath(path)
+		if err != nil {
+			return fmt.Errorf("canonicalize recovered segment %s: %w", path, err)
+		}
+		if filepath.Dir(pathIdentity) != sessionIdentity || !pathWithinRoot(rootIdentity, pathIdentity) {
+			return fmt.Errorf("refuse recovered segment outside recording session %d: %s", recording.ID, path)
+		}
 		start, err := segmentStartTime(path)
 		if err != nil {
 			return err
@@ -180,13 +269,16 @@ func (s *RecorderService) reconcileSegmentDirectory(recording *model.Recording, 
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		duration, probeErr := probe(ctx, path)
 		cancel()
+		if isSegmentProbeInfrastructureError(probeErr) {
+			return fmt.Errorf("probe recovered segment %s deferred: %w", path, probeErr)
+		}
 		status := model.RecordingStatusCompleted
 		if info.Size() == 0 || probeErr != nil || duration <= 0 {
 			status = model.RecordingStatusFailed
 			duration = 0
 		}
 		sequence := index + 1
-		if _, used := usedSequences[sequence]; used && indexedByPath[path] == nil {
+		if _, used := usedSequences[sequence]; used && indexedByPath[pathIdentity] == nil {
 			sequence = 1
 			for {
 				if _, used := usedSequences[sequence]; !used {
@@ -207,7 +299,7 @@ func (s *RecorderService) reconcileSegmentDirectory(recording *model.Recording, 
 			Status:      status,
 			Format:      model.FormatMP4,
 		}
-		if known := indexedByPath[path]; known != nil {
+		if known := indexedByPath[pathIdentity]; known != nil {
 			if err := s.db.Model(known).Updates(map[string]any{
 				"file_size":   segment.FileSize,
 				"start_time":  segment.StartTime,
@@ -227,6 +319,10 @@ func (s *RecorderService) reconcileSegmentDirectory(recording *model.Recording, 
 	if err := s.recomputeRecordingAggregate(s.db, recording.ID); err != nil {
 		return err
 	}
+	return s.finalizeReconciledRecording(recording)
+}
+
+func (s *RecorderService) finalizeReconciledRecording(recording *model.Recording) error {
 	if recording.Status != model.RecordingStatusRecording {
 		return nil
 	}
@@ -304,6 +400,8 @@ func (s *RecorderService) RunRetentionOnce() error {
 		return err
 	}
 	newestID := newestSegmentID(allCompleted)
+	var retentionErrors []error
+	failedCandidates := make(map[uint]struct{})
 	candidates, err := s.completedRetentionCandidates("recording_segments.end_time < ?", cutoff)
 	if err != nil {
 		return err
@@ -313,32 +411,33 @@ func (s *RecorderService) RunRetentionOnce() error {
 			continue
 		}
 		if err := s.deleteRetainedSegment(root, &candidates[index]); err != nil {
-			return err
+			retentionErrors = append(retentionErrors, err)
+			failedCandidates[candidates[index].ID] = struct{}{}
 		}
 	}
 
 	stat := s.diskStat
 	if stat == nil {
-		return nil
+		return errors.Join(retentionErrors...)
 	}
 	usage, err := stat(root)
 	if err != nil {
-		return fmt.Errorf("stat recordings disk: %w", err)
+		return errors.Join(append(retentionErrors, fmt.Errorf("stat recordings disk: %w", err))...)
 	}
 	if usage.Total == 0 {
-		return fmt.Errorf("stat recordings disk: total bytes is zero")
+		return errors.Join(append(retentionErrors, fmt.Errorf("stat recordings disk: total bytes is zero"))...)
 	}
 	cleanupPercent := s.cfg.RecordingCleanupFreePercent
 	if cleanupPercent <= 0 {
 		cleanupPercent = 15
 	}
 	if diskFreePercent(usage) > float64(cleanupPercent) {
-		return nil
+		return errors.Join(retentionErrors...)
 	}
 
 	pressureCandidates, err := s.completedRetentionCandidates("")
 	if err != nil {
-		return err
+		return errors.Join(append(retentionErrors, err)...)
 	}
 	newestID = newestSegmentID(pressureCandidates)
 	for index := range pressureCandidates {
@@ -346,21 +445,28 @@ func (s *RecorderService) RunRetentionOnce() error {
 		if segment.ID == newestID {
 			continue
 		}
+		if _, alreadyFailed := failedCandidates[segment.ID]; alreadyFailed {
+			continue
+		}
 		if err := s.deleteRetainedSegment(root, segment); err != nil {
-			return err
+			retentionErrors = append(retentionErrors, err)
+			failedCandidates[segment.ID] = struct{}{}
+			continue
 		}
 		usage, err = stat(root)
 		if err != nil {
-			return fmt.Errorf("restat recordings disk: %w", err)
+			retentionErrors = append(retentionErrors, fmt.Errorf("restat recordings disk: %w", err))
+			break
 		}
 		if usage.Total == 0 {
-			return fmt.Errorf("restat recordings disk: total bytes is zero")
+			retentionErrors = append(retentionErrors, fmt.Errorf("restat recordings disk: total bytes is zero"))
+			break
 		}
 		if diskFreePercent(usage) > float64(cleanupPercent) {
-			return nil
+			return errors.Join(retentionErrors...)
 		}
 	}
-	return nil
+	return errors.Join(retentionErrors...)
 }
 
 // StartRetention runs safe segment-file retention every five minutes until
@@ -489,4 +595,23 @@ func resolvePathSymlinksAllowMissing(path string) (string, error) {
 		missing = append(missing, filepath.Base(cursor))
 		cursor = parent
 	}
+}
+
+func canonicalFilesystemPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := resolvePathSymlinksAllowMissing(absolute)
+	if err != nil {
+		return "", err
+	}
+	return normalizeFilesystemPath(filepath.Clean(resolved), runtime.GOOS == "windows"), nil
+}
+
+func normalizeFilesystemPath(path string, caseInsensitive bool) string {
+	if caseInsensitive {
+		return strings.ToLower(path)
+	}
+	return path
 }

@@ -26,6 +26,22 @@ import (
 type segmentDurationProbe func(context.Context, string) (time.Duration, error)
 type segmentCommandFactory func(string, ...string) *exec.Cmd
 
+type segmentProbeInfrastructureError struct {
+	err error
+}
+
+func (e *segmentProbeInfrastructureError) Error() string { return e.err.Error() }
+func (e *segmentProbeInfrastructureError) Unwrap() error { return e.err }
+
+func isSegmentProbeInfrastructureError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var infrastructureErr *segmentProbeInfrastructureError
+	var execErr *exec.Error
+	return errors.As(err, &infrastructureErr) || errors.Is(err, exec.ErrNotFound) || errors.As(err, &execErr) || os.IsNotExist(err)
+}
+
 const segmentStopGracePeriod = 3 * time.Second
 
 type segmentSupervisor struct {
@@ -315,6 +331,10 @@ func segmentStartTime(path string) (time.Time, error) {
 }
 
 func probeSegmentDuration(ctx context.Context, path string) (time.Duration, error) {
+	status := pkg.GetFFmpegStatus()
+	if status.State == "downloading" || status.State == "extracting" || status.State == "checking" {
+		return 0, &segmentProbeInfrastructureError{err: fmt.Errorf("ffprobe unavailable while FFmpeg state is %s", status.State)}
+	}
 	cmd := exec.CommandContext(ctx, pkg.FFprobeBinPath(),
 		"-v", "error",
 		"-show_entries", "format=duration",
@@ -323,6 +343,9 @@ func probeSegmentDuration(ctx context.Context, path string) (time.Duration, erro
 	)
 	out, err := cmd.Output()
 	if err != nil {
+		if isSegmentProbeInfrastructureError(err) {
+			return 0, &segmentProbeInfrastructureError{err: err}
+		}
 		return 0, err
 	}
 	seconds, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)

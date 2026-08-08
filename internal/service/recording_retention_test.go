@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -291,6 +292,197 @@ func TestReconcileSegmentsAssignsUnusedSequenceToCrashFragment(t *testing.T) {
 		t.Fatalf("ReconcileSegments: %v", err)
 	}
 	assertSegmentRows(t, db, recording.ID, 2)
+}
+
+func TestReconcileSegmentsCanonicalizesRelativeIndexedPath(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relativeRoot, err := filepath.Rel(workingDir, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recording := &model.Recording{CameraID: 17, StartTime: time.Now().UTC(), Status: model.RecordingStatusCompleted, Format: model.FormatMP4, StorageMode: model.StorageModeSegmented}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatal(err)
+	}
+	relativeSession := filepath.Join(relativeRoot, "17", fmt.Sprint(recording.ID))
+	absoluteSession := filepath.Join(root, "17", fmt.Sprint(recording.ID))
+	if err := os.MkdirAll(absoluteSession, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(recording).Update("file_path", relativeSession).Error; err != nil {
+		t.Fatal(err)
+	}
+	relativeSegment := filepath.Join(relativeSession, "20260808T120000Z.mp4")
+	absoluteSegment := filepath.Join(absoluteSession, "20260808T120000Z.mp4")
+	if err := os.WriteFile(absoluteSegment, []byte("one physical file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	indexed := &model.RecordingSegment{RecordingID: recording.ID, CameraID: recording.CameraID, Sequence: 1, FilePath: relativeSegment, FileSize: 17, StartTime: start, EndTime: start.Add(time.Second), DurationMS: 1000, Status: model.RecordingStatusCompleted, Format: model.FormatMP4}
+	if err := db.Create(indexed).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = relativeRoot
+	svc := NewRecorderService(db, cfg)
+	svc.segmentProbe = func(context.Context, string) (time.Duration, error) { return time.Second, nil }
+	if err := svc.ReconcileSegments(); err != nil {
+		t.Fatalf("ReconcileSegments: %v", err)
+	}
+	assertSegmentRows(t, db, recording.ID, 1)
+}
+
+func TestNormalizeFilesystemPathFoldsWindowsCaseAliases(t *testing.T) {
+	upper := normalizeFilesystemPath(`C:\Recordings\7\1\SEGMENT.MP4`, true)
+	lower := normalizeFilesystemPath(`c:\recordings\7\1\segment.mp4`, true)
+	if upper != lower {
+		t.Fatalf("Windows path identities differ: %q != %q", upper, lower)
+	}
+	if got := normalizeFilesystemPath("/Archive/A.mp4", false); got != "/Archive/A.mp4" {
+		t.Fatalf("case-sensitive path changed to %q", got)
+	}
+}
+
+func TestReconcileSegmentsRepairsDatabaseRowsWhenSessionDirectoryIsMissing(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir()
+	recording := &model.Recording{CameraID: 18, FileSize: 200, Duration: 20, StartTime: time.Now().Add(-time.Hour).UTC(), Status: model.RecordingStatusRecording, Format: model.FormatMP4, StorageMode: model.StorageModeSegmented}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatal(err)
+	}
+	missingSession := filepath.Join(root, "18", fmt.Sprint(recording.ID))
+	if err := db.Model(recording).Update("file_path", missingSession).Error; err != nil {
+		t.Fatal(err)
+	}
+	for sequence := 1; sequence <= 2; sequence++ {
+		start := recording.StartTime.Add(time.Duration(sequence-1) * 10 * time.Second)
+		segment := &model.RecordingSegment{RecordingID: recording.ID, CameraID: recording.CameraID, Sequence: sequence, FilePath: filepath.Join(missingSession, fmt.Sprintf("20260808T12000%dZ.mp4", sequence)), FileSize: 100, StartTime: start, EndTime: start.Add(10 * time.Second), DurationMS: 10000, Status: model.RecordingStatusCompleted, Format: model.FormatMP4}
+		if err := db.Create(segment).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = root
+	svc := NewRecorderService(db, cfg)
+	if err := svc.ReconcileSegments(); err != nil {
+		t.Fatalf("ReconcileSegments: %v", err)
+	}
+	var segments []model.RecordingSegment
+	if err := db.Where("recording_id = ?", recording.ID).Order("sequence").Find(&segments).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, segment := range segments {
+		if segment.Status != model.RecordingStatusFailed || segment.FileSize != 0 || segment.DurationMS != 0 {
+			t.Fatalf("missing segment %d = status %q size %d duration %d", segment.ID, segment.Status, segment.FileSize, segment.DurationMS)
+		}
+	}
+	var aggregate model.Recording
+	if err := db.First(&aggregate, recording.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if aggregate.Status != model.RecordingStatusFailed || aggregate.FileSize != 0 || aggregate.Duration != 0 || aggregate.EndTime == nil {
+		t.Fatalf("missing session aggregate = status %q size %d duration %d end %v", aggregate.Status, aggregate.FileSize, aggregate.Duration, aggregate.EndTime)
+	}
+}
+
+func TestReconcileSegmentsDefersWhenProbeInfrastructureIsUnavailable(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir()
+	recording := &model.Recording{CameraID: 19, FileSize: 12, Duration: 5, StartTime: time.Now().UTC(), Status: model.RecordingStatusCompleted, Format: model.FormatMP4, StorageMode: model.StorageModeSegmented}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatal(err)
+	}
+	sessionDir := filepath.Join(root, "19", fmt.Sprint(recording.ID))
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(recording).Update("file_path", sessionDir).Error; err != nil {
+		t.Fatal(err)
+	}
+	segmentPath := filepath.Join(sessionDir, "20260808T120000Z.mp4")
+	if err := os.WriteFile(segmentPath, []byte("valid bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	segment := &model.RecordingSegment{RecordingID: recording.ID, CameraID: recording.CameraID, Sequence: 1, FilePath: segmentPath, FileSize: 11, StartTime: start, EndTime: start.Add(5 * time.Second), DurationMS: 5000, Status: model.RecordingStatusCompleted, Format: model.FormatMP4}
+	if err := db.Create(segment).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = root
+	svc := NewRecorderService(db, cfg)
+	svc.segmentProbe = func(context.Context, string) (time.Duration, error) { return 0, exec.ErrNotFound }
+	err := svc.ReconcileSegments()
+	if !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("ReconcileSegments error = %v, want ffprobe infrastructure error", err)
+	}
+	var unchanged model.RecordingSegment
+	if err := db.First(&unchanged, segment.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Status != model.RecordingStatusCompleted || unchanged.FileSize != 11 || unchanged.DurationMS != 5000 {
+		t.Fatalf("segment changed after unavailable probe: status %q size %d duration %d", unchanged.Status, unchanged.FileSize, unchanged.DurationMS)
+	}
+}
+
+func TestReconcileSegmentsRejectsSymlinkCandidateOutsideRoot(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	recording := &model.Recording{CameraID: 20, StartTime: time.Now().UTC(), Status: model.RecordingStatusCompleted, Format: model.FormatMP4, StorageMode: model.StorageModeSegmented}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatal(err)
+	}
+	sessionDir := filepath.Join(root, "20", fmt.Sprint(recording.ID))
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(recording).Update("file_path", sessionDir).Error; err != nil {
+		t.Fatal(err)
+	}
+	outsidePath := filepath.Join(outside, "outside.mp4")
+	if err := os.WriteFile(outsidePath, []byte("outside playable bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(sessionDir, "20260808T120000Z.mp4")
+	if err := os.Symlink(outsidePath, candidate); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = root
+	svc := NewRecorderService(db, cfg)
+	probeCalls := 0
+	svc.segmentProbe = func(context.Context, string) (time.Duration, error) {
+		probeCalls++
+		return time.Second, nil
+	}
+	if err := svc.ReconcileSegments(); err == nil {
+		t.Fatal("ReconcileSegments accepted a candidate symlink outside the recording root")
+	}
+	if probeCalls != 0 {
+		t.Fatalf("outside candidate probe calls = %d, want 0", probeCalls)
+	}
+	assertSegmentRows(t, db, recording.ID, 0)
+	if contents, err := os.ReadFile(outsidePath); err != nil || string(contents) != "outside playable bytes" {
+		t.Fatalf("outside target changed: contents=%q err=%v", contents, err)
+	}
 }
 
 func TestRecordingRetentionRemovesExpiredCompletedSegments(t *testing.T) {
@@ -675,15 +867,19 @@ func TestRecordingRetentionRefusesSymlinkEscapeOutsideRoot(t *testing.T) {
 	if err := os.MkdirAll(safeDir, 0o755); err != nil {
 		t.Fatalf("create safe session directory: %v", err)
 	}
+	safeMiddle := filepath.Join(safeDir, "middle.mp4")
 	safeNewest := filepath.Join(safeDir, "newest.mp4")
-	if err := os.WriteFile(safeNewest, []byte("newest"), 0o644); err != nil {
-		t.Fatalf("write newest segment: %v", err)
+	for _, path := range []string{safeMiddle, safeNewest} {
+		if err := os.WriteFile(path, []byte("safe"), 0o644); err != nil {
+			t.Fatalf("write safe segment: %v", err)
+		}
 	}
 	for index, fixture := range []struct {
 		path  string
 		start time.Time
 	}{
 		{escapedPath, now.Add(-10 * 24 * time.Hour)},
+		{safeMiddle, now.Add(-9*24*time.Hour - time.Hour)},
 		{safeNewest, now.Add(-9 * 24 * time.Hour)},
 	} {
 		segment := &model.RecordingSegment{
@@ -724,5 +920,77 @@ func TestRecordingRetentionRefusesSymlinkEscapeOutsideRoot(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("escaped segment rows = %d, want 1", count)
+	}
+	if _, err := os.Stat(safeMiddle); !os.IsNotExist(err) {
+		t.Fatalf("safe candidate after unsafe row was not removed: %v", err)
+	}
+	if _, err := os.Stat(safeNewest); err != nil {
+		t.Fatalf("newest safe segment was removed: %v", err)
+	}
+	var middleCount int64
+	if err := db.Model(&model.RecordingSegment{}).Where("file_path = ?", safeMiddle).Count(&middleCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if middleCount != 0 {
+		t.Fatalf("safe middle segment rows = %d, want 0", middleCount)
+	}
+}
+
+func TestRecordingRetentionPressureContinuesAfterUnsafeCandidate(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	linkDir := filepath.Join(root, "pressure-escape")
+	if err := os.Symlink(outside, linkDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	recording := &model.Recording{CameraID: 21, StartTime: now.Add(-3 * time.Hour), Status: model.RecordingStatusCompleted, Format: model.FormatMP4, StorageMode: model.StorageModeSegmented}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatal(err)
+	}
+	safeDir := filepath.Join(root, "21", fmt.Sprint(recording.ID))
+	if err := os.MkdirAll(safeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(recording).Update("file_path", safeDir).Error; err != nil {
+		t.Fatal(err)
+	}
+	unsafePath := filepath.Join(linkDir, "oldest.mp4")
+	safeMiddle := filepath.Join(safeDir, "middle.mp4")
+	safeNewest := filepath.Join(safeDir, "newest.mp4")
+	for _, path := range []string{unsafePath, safeMiddle, safeNewest} {
+		if err := os.WriteFile(path, []byte("segment"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, path := range []string{unsafePath, safeMiddle, safeNewest} {
+		start := now.Add(time.Duration(index-3) * time.Hour)
+		segment := &model.RecordingSegment{RecordingID: recording.ID, CameraID: recording.CameraID, Sequence: index + 1, FilePath: path, FileSize: 7, StartTime: start, EndTime: start.Add(time.Minute), DurationMS: int64(time.Minute / time.Millisecond), Status: model.RecordingStatusCompleted, Format: model.FormatMP4}
+		if err := db.Create(segment).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = root
+	cfg.RecordingRetentionDays = 365
+	cfg.RecordingCleanupFreePercent = 15
+	svc := NewRecorderService(db, cfg)
+	svc.retentionNow = func() time.Time { return now }
+	svc.diskStat = func(string) (diskUsage, error) { return diskUsage{Total: 100, Free: 1}, nil }
+	if err := svc.RunRetentionOnce(); err == nil {
+		t.Fatal("pressure retention did not report unsafe candidate")
+	}
+	if _, err := os.Stat(unsafePath); err != nil {
+		t.Fatalf("unsafe candidate changed: %v", err)
+	}
+	if _, err := os.Stat(safeMiddle); !os.IsNotExist(err) {
+		t.Fatalf("safe pressure candidate was not removed: %v", err)
+	}
+	if _, err := os.Stat(safeNewest); err != nil {
+		t.Fatalf("newest candidate was removed: %v", err)
 	}
 }
