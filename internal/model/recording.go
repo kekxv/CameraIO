@@ -2,6 +2,8 @@ package model
 
 import (
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type Recording struct {
@@ -37,6 +39,53 @@ type RecordingSegment struct {
 	Status      string    `json:"status" gorm:"type:varchar(16);default:recording"`
 	Format      string    `json:"format" gorm:"type:varchar(8);default:mp4"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+func normalizeTimeUTC(value time.Time) time.Time {
+	return value.UTC()
+}
+
+func normalizeTimePointerUTC(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	normalized := value.UTC()
+	return &normalized
+}
+
+func (r *Recording) normalizeTimesUTC() {
+	r.StartTime = normalizeTimeUTC(r.StartTime)
+	r.EndTime = normalizeTimePointerUTC(r.EndTime)
+}
+
+// BeforeSave ensures recording timestamps are stored in UTC.
+func (r *Recording) BeforeSave(_ *gorm.DB) error {
+	r.normalizeTimesUTC()
+	return nil
+}
+
+// AfterFind ensures callers receive recording timestamps in UTC.
+func (r *Recording) AfterFind(_ *gorm.DB) error {
+	r.normalizeTimesUTC()
+	return nil
+}
+
+func (s *RecordingSegment) normalizeTimesUTC() {
+	s.StartTime = normalizeTimeUTC(s.StartTime)
+	s.EndTime = normalizeTimeUTC(s.EndTime)
+	s.CreatedAt = normalizeTimeUTC(s.CreatedAt)
+}
+
+// BeforeSave ensures recording segment timestamps are stored in UTC.
+func (s *RecordingSegment) BeforeSave(_ *gorm.DB) error {
+	s.normalizeTimesUTC()
+	return nil
+}
+
+// AfterFind ensures callers receive recording segment timestamps in UTC.
+func (s *RecordingSegment) AfterFind(_ *gorm.DB) error {
+	s.normalizeTimesUTC()
+	return nil
 }
 
 const (
