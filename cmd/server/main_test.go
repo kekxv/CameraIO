@@ -1,18 +1,27 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 )
 
 type startupRecorderFake struct {
-	calls        *[]string
-	reconcileErr error
+	calls           *[]string
+	reconcileErr    error
+	reconcileErrors []error
+	reconcileCalls  int
 }
 
 func (f *startupRecorderFake) ReconcileSegments() error {
 	*f.calls = append(*f.calls, "reconcile-segments")
+	if f.reconcileCalls < len(f.reconcileErrors) {
+		err := f.reconcileErrors[f.reconcileCalls]
+		f.reconcileCalls++
+		return err
+	}
 	return f.reconcileErr
 }
 
@@ -46,8 +55,13 @@ func TestStartRecordingSubsystemsReconcilesBeforeScheduler(t *testing.T) {
 	recorder := &startupRecorderFake{calls: &calls}
 	scheduler := &startupSchedulerFake{calls: &calls}
 
-	if err := startRecordingSubsystems(recorder, scheduler); err != nil {
-		t.Fatalf("startRecordingSubsystems: %v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := startRecordingSubsystems(ctx, recorder, scheduler, time.Millisecond, nil)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("recording startup did not complete")
 	}
 	want := []string{"reconcile-segments", "reconcile-legacy", "retention-once", "start-retention", "start-sweep", "start-scheduler"}
 	if !reflect.DeepEqual(calls, want) {
@@ -55,15 +69,29 @@ func TestStartRecordingSubsystemsReconcilesBeforeScheduler(t *testing.T) {
 	}
 }
 
-func TestStartRecordingSubsystemsDoesNotStartSchedulerAfterReconcileFailure(t *testing.T) {
+func TestStartRecordingSubsystemsRetriesReconciliationBeforeStartingScheduler(t *testing.T) {
 	var calls []string
-	recorder := &startupRecorderFake{calls: &calls, reconcileErr: errors.New("recording root unavailable")}
+	probeUnavailable := errors.New("ffprobe downloading")
+	recorder := &startupRecorderFake{calls: &calls, reconcileErrors: []error{probeUnavailable, nil}}
 	scheduler := &startupSchedulerFake{calls: &calls}
-
-	if err := startRecordingSubsystems(recorder, scheduler); err == nil {
-		t.Fatal("startRecordingSubsystems succeeded after reconciliation failure")
+	reported := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := startRecordingSubsystems(ctx, recorder, scheduler, time.Millisecond, func(err error) { reported <- err })
+	select {
+	case err := <-reported:
+		if !errors.Is(err, probeUnavailable) {
+			t.Fatalf("reported error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial reconciliation failure was not reported")
 	}
-	want := []string{"reconcile-segments"}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("recording startup did not retry")
+	}
+	want := []string{"reconcile-segments", "reconcile-segments", "reconcile-legacy", "retention-once", "start-retention", "start-sweep", "start-scheduler"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("startup calls = %v, want %v", calls, want)
 	}

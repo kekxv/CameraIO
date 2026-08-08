@@ -28,7 +28,7 @@ type scheduleStartup interface {
 	Start()
 }
 
-func startRecordingSubsystems(recorder recordingStartup, scheduler scheduleStartup) error {
+func prepareRecordingSubsystems(recorder recordingStartup) error {
 	if err := recorder.ReconcileSegments(); err != nil {
 		return fmt.Errorf("reconcile recording segments: %w", err)
 	}
@@ -36,10 +36,47 @@ func startRecordingSubsystems(recorder recordingStartup, scheduler scheduleStart
 	if err := recorder.RunRetentionOnce(); err != nil {
 		return fmt.Errorf("run initial recording retention: %w", err)
 	}
-	recorder.StartRetention()
-	recorder.StartSweep()
-	scheduler.Start()
 	return nil
+}
+
+func startRecordingSubsystems(ctx context.Context, recorder recordingStartup, scheduler scheduleStartup, retryInterval time.Duration, reportError func(error)) <-chan struct{} {
+	done := make(chan struct{})
+	if retryInterval <= 0 {
+		retryInterval = 5 * time.Second
+	}
+	go func() {
+		defer close(done)
+		for {
+			if err := prepareRecordingSubsystems(recorder); err != nil {
+				if reportError != nil {
+					reportError(err)
+				}
+				timer := time.NewTimer(retryInterval)
+				select {
+				case <-ctx.Done():
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					return
+				case <-timer.C:
+					continue
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			recorder.StartRetention()
+			recorder.StartSweep()
+			scheduler.Start()
+			return
+		}
+	}()
+	return done
 }
 
 func main() {
@@ -88,11 +125,13 @@ func main() {
 	localCamSvc := service.NewLocalCameraService()
 	discoverySvc := service.NewDiscoveryService(onvifSvc)
 	scheduleSvc := service.NewScheduleService(db, recorderSvc)
+	recordingStartupCtx, stopRecordingStartup := context.WithCancel(context.Background())
+	defer stopRecordingStartup()
 
 	// 启动后台服务
-	if err := startRecordingSubsystems(recorderSvc, scheduleSvc); err != nil {
-		log.Fatalf("start recording services: %v", err)
-	}
+	startRecordingSubsystems(recordingStartupCtx, recorderSvc, scheduleSvc, 5*time.Second, func(err error) {
+		log.Printf("[recorder] startup maintenance deferred; retrying: %v", err)
+	})
 	monitor.Start()
 	if err := gb28181Svc.Start(); err != nil {
 		log.Printf("[GB28181] failed to start SIP server: %v", err)
@@ -135,6 +174,7 @@ func main() {
 	defer cancel()
 
 	// 1. 先停止后台服务（拉流/录像），让 MJPEG 等长连接请求尽快返回
+	stopRecordingStartup()
 	cameraSvc.Shutdown()
 	streamSvc.Shutdown()
 	scheduleSvc.Stop()

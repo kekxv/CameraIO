@@ -335,7 +335,9 @@ func probeSegmentDuration(ctx context.Context, path string) (time.Duration, erro
 	if status.State == "downloading" || status.State == "extracting" || status.State == "checking" {
 		return 0, &segmentProbeInfrastructureError{err: fmt.Errorf("ffprobe unavailable while FFmpeg state is %s", status.State)}
 	}
-	cmd := exec.CommandContext(ctx, pkg.FFprobeBinPath(),
+	probePath := pkg.FFprobeBinPath()
+	probeIsFFmpeg := sameProbeAndFFmpegExecutable(probePath, pkg.FFmpegBinPath())
+	cmd := exec.CommandContext(ctx, probePath,
 		"-v", "error",
 		"-show_entries", "format=duration",
 		"-of", "default=noprint_wrappers=1:nokey=1",
@@ -343,6 +345,9 @@ func probeSegmentDuration(ctx context.Context, path string) (time.Duration, erro
 	)
 	out, err := cmd.Output()
 	if err != nil {
+		if probeIsFFmpeg {
+			return 0, &segmentProbeInfrastructureError{err: fmt.Errorf("ffprobe unavailable: probe executable resolves to ffmpeg: %w", err)}
+		}
 		if isSegmentProbeInfrastructureError(err) {
 			return 0, &segmentProbeInfrastructureError{err: err}
 		}
@@ -353,6 +358,15 @@ func probeSegmentDuration(ctx context.Context, path string) (time.Duration, erro
 		return 0, fmt.Errorf("invalid duration %q", strings.TrimSpace(string(out)))
 	}
 	return time.Duration(seconds * float64(time.Second)), nil
+}
+
+func sameProbeAndFFmpegExecutable(probePath, ffmpegPath string) bool {
+	probeIdentity, probeErr := canonicalFilesystemPath(probePath)
+	ffmpegIdentity, ffmpegErr := canonicalFilesystemPath(ffmpegPath)
+	if probeErr == nil && ffmpegErr == nil {
+		return probeIdentity == ffmpegIdentity
+	}
+	return strings.EqualFold(filepath.Clean(probePath), filepath.Clean(ffmpegPath))
 }
 
 func probeRTSPAAC(ctx context.Context, rtspURL string) (bool, error) {

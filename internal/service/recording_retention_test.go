@@ -439,6 +439,34 @@ func TestReconcileSegmentsDefersWhenProbeInfrastructureIsUnavailable(t *testing.
 	}
 }
 
+func TestProbeSegmentDurationTreatsFFmpegSubstitutionAsInfrastructure(t *testing.T) {
+	if os.Getenv("CAMERAIO_FFPROBE_SUBSTITUTION_HELPER") != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestProbeSegmentDurationTreatsFFmpegSubstitutionAsInfrastructure$")
+		cmd.Env = append(os.Environ(), "CAMERAIO_FFPROBE_SUBSTITUTION_HELPER=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("substitution helper failed: %v\n%s", err, output)
+		}
+		return
+	}
+
+	fakeFFmpeg := filepath.Join(t.TempDir(), "ffmpeg")
+	if err := os.WriteFile(fakeFFmpeg, []byte("#!/bin/sh\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAMERAIO_FFMPEG_PATH", fakeFFmpeg)
+	if !pkg.EnsureFFmpegAsync() {
+		t.Fatal("fake ffmpeg path was not selected")
+	}
+	_, err := probeSegmentDuration(context.Background(), filepath.Join(t.TempDir(), "segment.mp4"))
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("probe error = %T %v, want wrapped ExitError", err, err)
+	}
+	if !isSegmentProbeInfrastructureError(err) {
+		t.Fatalf("ffmpeg-substituted probe error was classified as corrupt media: %v", err)
+	}
+}
+
 func TestReconcileSegmentsRejectsSymlinkCandidateOutsideRoot(t *testing.T) {
 	db, cleanup := setupRecorderTestDB(t)
 	defer cleanup()
