@@ -550,21 +550,12 @@
                 class="ui-select"
               >
                 <option value="mp4">MP4</option>
-                <option value="webm">WebM</option>
-                <option value="ts">TS</option>
+				<option value="ts">TS</option>
               </select>
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">码率</label>
-              <select
-                v-model.number="scheduleForm.bitrate"
-                class="ui-select"
-              >
-                <option :value="0">原画质（相机码率）</option>
-                <option :value="512">512kbps（小文件）</option>
-                <option :value="1000">1Mbps（推荐）</option>
-                <option :value="2000">2Mbps（高清）</option>
-              </select>
+			  <p class="ui-input bg-slate-50 text-slate-600">原画质（相机码率流拷贝）</p>
             </div>
             <div class="flex items-end">
               <label class="flex items-center gap-2 text-sm pb-2">
@@ -596,6 +587,7 @@ import {
   connectEventBus, getRecordingTimeline, resolveRecordingPlayback,
   getSegmentMediaUrl, normalizeRecordingSearch, buildRecordingCoverage,
   createRecordingPlaybackCoordinator,
+	normalizeResourceSafeRecordingOptions,
 } from '../api'
 
 const activeTab = ref('recordings')
@@ -690,7 +682,11 @@ const loadCameras = async () => {
 }
 
 const loadSchedules = async () => {
-  schedules.value = await listSchedules()
+  const loaded = await listSchedules()
+  schedules.value = loaded.map((schedule) => ({
+    ...schedule,
+    ...normalizeResourceSafeRecordingOptions(schedule),
+  }))
 }
 
 onMounted(async () => {
@@ -915,8 +911,8 @@ const handleDeleteRecording = async (rec) => {
 // ---------- 定时计划 ----------
 
 const openScheduleDialog = (sch) => {
-  if (sch) {
-    scheduleForm.value = { ...defaultScheduleForm(), ...sch }
+	if (sch) {
+		scheduleForm.value = { ...defaultScheduleForm(), ...sch, ...normalizeResourceSafeRecordingOptions(sch) }
   } else {
     scheduleForm.value = defaultScheduleForm()
     scheduleForm.value.camera_id = cameras.value[0]?.id || null
@@ -931,7 +927,7 @@ const toggleDay = (i) => {
 const saveSchedule = async () => {
   savingSchedule.value = true
   try {
-    const data = { ...scheduleForm.value }
+	const data = { ...scheduleForm.value, ...normalizeResourceSafeRecordingOptions(scheduleForm.value) }
     if (data.id) {
       await updateSchedule(data.id, data)
     } else {

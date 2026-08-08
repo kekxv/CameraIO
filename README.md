@@ -107,31 +107,33 @@ cd frontend && npm run dev
 
 Live preview remains an independent, unchanged path: MJPEG is used for live
 viewing, and m3u8 is not used for live viewing. Continuous archive recording
-uses MP4 stream-copy; WebM is legacy/manual only. Plan storage capacity at
+uses MP4 stream-copy; WebM remains playable only for legacy files and cannot be
+selected for new recordings. Plan storage capacity at
 approximately 1 Mbps ≈ 10.8 GB/day/camera.
 
 ### 单机录像验收与部署上限
 
 不要以估算的摄像头数量作为这台 i5 主机的部署上限。每次部署到目标主机，使用
 Linux 或 Windows 验收脚本产生一份带时间戳的证据日志；脚本运行构建/浏览器测试，
-生成五分钟的 FFmpeg 分段样本并逐个用 `ffprobe` 验证可播放，也可检查实际录像目录
+生成五分钟的 FFmpeg 分段样本并逐个用 `ffprobe` 验证可播放，并检查实际录像目录
 和 SQLite `recording_segments` 的相邻时间间隙（不得超过两秒）：
 
 ```bash
 scripts/verify-single-host-recording.sh \
   --camera-url 'rtsp://camera/substream' \
-  --segments-dir data/recordings/RECORDING_ID \
+  --segments-dir data/recordings/CAMERA_ID/RECORDING_ID \
   --database data/cameradio.db \
   --latency-baseline baseline-ms.txt \
   --latency-recording recording-ms.txt \
-  --resource-samples resource-samples.csv
+  --resource-samples resource-samples.csv \
+  --acceptance-evidence acceptance-evidence.csv
 ```
 
 ```powershell
 .\scripts\verify-single-host-recording.ps1 -CameraUrl 'rtsp://camera/substream' `
-  -SegmentsDir data\recordings\RECORDING_ID -Database data\cameradio.db `
+  -SegmentsDir data\recordings\CAMERA_ID\RECORDING_ID -Database data\cameradio.db `
   -LatencyBaseline baseline-ms.txt -LatencyRecording recording-ms.txt `
-  -ResourceSamples resource-samples.csv
+  -ResourceSamples resource-samples.csv -AcceptanceEvidence acceptance-evidence.csv
 ```
 
 `baseline-ms.txt` 和 `recording-ms.txt` 各有至少 30 行，每行是一次玻璃到玻璃
@@ -141,8 +143,8 @@ scripts/verify-single-host-recording.sh \
 
 `resource-samples.csv` 的表头必须为
 `timestamp_unix,host_cpu_percent,recording_cpu_percent_per_stream,free_disk_percent`，其中
-`timestamp_unix` 为 Unix 秒。至少记录两个按时间顺序的样本，首尾必须相隔 30 分钟或
-更多。在全部必要摄像头
+`timestamp_unix` 为 Unix 秒。至少记录 31 个严格递增的样本，任意相邻样本不得相隔
+超过 60 秒，首尾必须相隔 30 分钟或更多。在全部必要摄像头
 持续录像且打开正常数量预览格的情况下，完成 30 分钟正常自助服务流程；记录定期
 样本并确认自助服务没有新增超时/错误、录制 FFmpeg 处于低于普通优先级、每流录像
 CPU 小于 5%、主机持续 CPU 小于 70%、可用磁盘大于 15%。
@@ -152,6 +154,19 @@ CPU 小于 5%、主机持续 CPU 小于 70%、可用磁盘大于 15%。
 故意制造的真实录像间隙必须显示，不可悄悄跳过。资源门槛失败时，仅依次调整摄像头
 H.264 子码流、相机侧 VBR、10–15 fps、一秒 GOP、再降低源码率/分辨率；不要启用服务端
 WebM/VP9 或 H.264 软件转码。
+
+`acceptance-evidence.csv` 使用精确表头 `field,value`，并包含以下 15 个且仅包含这些字段：
+`playback_beginning`、`playback_middle`、`playback_final_second`、
+`playback_segment_boundary`、`playback_gap_visible`、`ffmpeg_priority_below_normal`、
+`self_service_workload` 的值均为 `pass`；`max_seek_error_ms` 不超过 1000，
+`max_boundary_pause_ms` 不超过 250，`self_service_timeout_error_delta` 不大于 0；
+`max_recording_cameras`、`max_preview_tiles`、`per_camera_bitrate_kbps`、
+`retention_days`、`disk_capacity_gb` 必须是正数。该文件既记录计划要求的边界回放、
+FFmpeg 低优先级和自助服务共存证据，也固定实测部署上限。
+
+非 `--smoke`/`-Smoke` 模式缺少摄像头、生产片段、数据库、两组延迟、资源或上述验收
+证据时会失败，也不允许跳过构建门禁。缩短的 smoke 会明确标记为非验收，允许输出
+`NOT COLLECTED`，不能用于批准部署。
 
 将实测值填入下表并与脚本日志一起保存；所有字段为空时，表示该主机尚未获得部署批准。
 

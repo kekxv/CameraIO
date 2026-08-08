@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -484,6 +485,42 @@ func TestRecorderService_ShutdownUsesWatcherCompletion(t *testing.T) {
 	svc.mu.Unlock()
 	if active {
 		t.Fatal("Shutdown left the recording task active")
+	}
+}
+
+func TestRecorderService_ShutdownClosesAdmissionBeforeSnapshot(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+	camera := &model.Camera{Name: "shutdown", RTSPUrl: "rtsp://camera/live", AccessProtocol: model.ProtocolRTSP}
+	if err := db.Create(camera).Error; err != nil {
+		t.Fatalf("create camera: %v", err)
+	}
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = t.TempDir()
+	svc := NewRecorderService(db, cfg)
+	starts := 0
+	svc.segmentCommand = func(_ string, _ ...string) *exec.Cmd {
+		starts++
+		cmd := exec.Command(os.Args[0], "-test.run=TestCooperativeSegmentFFmpegProcessHelper", "--")
+		cmd.Env = append(os.Environ(), "CAMERAIO_COOPERATIVE_SEGMENT_HELPER=1")
+		return cmd
+	}
+
+	svc.Shutdown()
+	_, err := svc.StartRecording(&StartRecordingInput{CameraID: camera.ID, Format: model.FormatMP4})
+	var unavailable *RecorderUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("StartRecording after shutdown error = %v, want RecorderUnavailableError", err)
+	}
+	if starts != 0 {
+		t.Fatalf("FFmpeg starts after shutdown = %d, want 0", starts)
+	}
+	var count int64
+	if err := db.Model(&model.Recording{}).Count(&count).Error; err != nil {
+		t.Fatalf("count recordings: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("recording rows created after shutdown = %d, want 0", count)
 	}
 }
 

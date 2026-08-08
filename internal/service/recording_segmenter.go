@@ -253,15 +253,17 @@ func (s *segmentSupervisor) scanCompleted(final bool) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		duration, err := probe(ctx, path)
 		cancel()
-		if err != nil {
+		if isSegmentProbeInfrastructureError(err) {
 			return fmt.Errorf("probe segment %s: %w", path, err)
-		}
-		if duration <= 0 {
-			return fmt.Errorf("probe segment %s: non-positive duration", path)
 		}
 		info, err := os.Stat(path)
 		if err != nil {
 			return fmt.Errorf("stat segment %s: %w", path, err)
+		}
+		status := model.RecordingStatusCompleted
+		if err != nil || duration <= 0 || info.Size() <= 0 {
+			status = model.RecordingStatusFailed
+			duration = 0
 		}
 		segments = append(segments, model.RecordingSegment{
 			RecordingID: s.recording.ID,
@@ -272,7 +274,7 @@ func (s *segmentSupervisor) scanCompleted(final bool) error {
 			StartTime:   start.UTC(),
 			EndTime:     start.Add(duration).UTC(),
 			DurationMS:  duration.Milliseconds(),
-			Status:      model.RecordingStatusCompleted,
+			Status:      status,
 			Format:      model.FormatMP4,
 		})
 	}
@@ -300,15 +302,22 @@ func (s *segmentSupervisor) storeSegments(segments []model.RecordingSegment) err
 		}
 		if err := tx.Model(&model.RecordingSegment{}).
 			Select("COALESCE(SUM(file_size), 0) AS file_size, COALESCE(SUM(duration_ms), 0) AS duration_ms").
-			Where("recording_id = ?", s.recording.ID).
+			Where("recording_id = ? AND status = ?", s.recording.ID, model.RecordingStatusCompleted).
 			Scan(&sums).Error; err != nil {
 			return fmt.Errorf("sum recording segments: %w", err)
 		}
 		var first, last model.RecordingSegment
-		if err := tx.Where("recording_id = ?", s.recording.ID).Order("start_time ASC").First(&first).Error; err != nil {
-			return fmt.Errorf("load first segment: %w", err)
+		firstErr := tx.Where("recording_id = ? AND status = ?", s.recording.ID, model.RecordingStatusCompleted).Order("start_time ASC").First(&first).Error
+		if firstErr == gorm.ErrRecordNotFound {
+			return tx.Model(&model.Recording{}).Where("id = ?", s.recording.ID).Updates(map[string]any{
+				"file_size": 0,
+				"duration":  0,
+			}).Error
 		}
-		if err := tx.Where("recording_id = ?", s.recording.ID).Order("end_time DESC").First(&last).Error; err != nil {
+		if firstErr != nil {
+			return fmt.Errorf("load first segment: %w", firstErr)
+		}
+		if err := tx.Where("recording_id = ? AND status = ?", s.recording.ID, model.RecordingStatusCompleted).Order("end_time DESC").First(&last).Error; err != nil {
 			return fmt.Errorf("load last segment: %w", err)
 		}
 		return tx.Model(&model.Recording{}).Where("id = ?", s.recording.ID).Updates(map[string]any{

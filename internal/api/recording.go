@@ -29,6 +29,11 @@ func (h *Handler) StartRecording(c *gin.Context) {
 			fail(c, http.StatusBadRequest, validationErr.Error())
 			return
 		}
+		var unavailableErr *service.RecorderUnavailableError
+		if errors.As(err, &unavailableErr) {
+			fail(c, http.StatusServiceUnavailable, unavailableErr.Error())
+			return
+		}
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -45,11 +50,17 @@ func (h *Handler) StopRecording(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, gin.H{
+	data := gin.H{
 		"message":      "recording stopped",
 		"recording_id": req.RecordingID,
-		"download_url": fmt.Sprintf("/api/v1/recordings/%d/download", req.RecordingID),
-	})
+	}
+	if recording, err := h.recorderSvc.GetRecording(req.RecordingID); err == nil {
+		data["storage_mode"] = recording.StorageMode
+		if recording.StorageMode != "segmented" {
+			data["download_url"] = fmt.Sprintf("/api/v1/recordings/%d/download", req.RecordingID)
+		}
+	}
+	ok(c, data)
 }
 
 func (h *Handler) ListRecordings(c *gin.Context) {
@@ -63,6 +74,26 @@ func (h *Handler) ListRecordings(c *gin.Context) {
 	}
 	if v := c.Query("status"); v != "" {
 		query.Status = &v
+	}
+	if v := c.Query("start_time"); v != "" {
+		parsed, valid := parseUTCQuery(c, "start_time")
+		if !valid {
+			fail(c, http.StatusBadRequest, "start_time must be an RFC3339 UTC timestamp")
+			return
+		}
+		query.StartTime = &parsed
+	}
+	if v := c.Query("end_time"); v != "" {
+		parsed, valid := parseUTCQuery(c, "end_time")
+		if !valid {
+			fail(c, http.StatusBadRequest, "end_time must be an RFC3339 UTC timestamp")
+			return
+		}
+		query.EndTime = &parsed
+	}
+	if query.StartTime != nil && query.EndTime != nil && !query.EndTime.After(*query.StartTime) {
+		fail(c, http.StatusBadRequest, "start_time must be before end_time")
+		return
 	}
 	if v := c.Query("page"); v != "" {
 		query.Page, _ = strconv.Atoi(v)
@@ -302,6 +333,10 @@ func (h *Handler) RecordingSegmentMedia(c *gin.Context) {
 	}
 	segment, err := h.recorderSvc.GetRecordingSegment(id)
 	if err != nil {
+		fail(c, http.StatusNotFound, "recording segment not found")
+		return
+	}
+	if segment.Status != "completed" || segment.DurationMS <= 0 || !segment.EndTime.After(segment.StartTime) || segment.FileSize <= 0 {
 		fail(c, http.StatusNotFound, "recording segment not found")
 		return
 	}

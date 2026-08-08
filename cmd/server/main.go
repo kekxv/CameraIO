@@ -222,11 +222,12 @@ func main() {
 	defer cancel()
 
 	// 1. 先停止后台服务（拉流/录像），让 MJPEG 等长连接请求尽快返回
+	recorderSvc.BeginShutdown()
 	cancelAndWaitRecordingStartup(recordingStartup)
-	cameraSvc.Shutdown()
-	streamSvc.Shutdown()
 	scheduleSvc.Stop()
 	recorderSvc.Shutdown()
+	cameraSvc.Shutdown()
+	streamSvc.Shutdown()
 	monitor.Stop()
 	gb28181Svc.Stop()
 

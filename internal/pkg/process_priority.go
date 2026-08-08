@@ -9,3 +9,11 @@ func LowerRecordingProcessPriority(pid int) error {
 	}
 	return lowerRecordingProcessPriority(pid)
 }
+
+func loweredNiceValue(current int) int {
+	target := current + 10
+	if target > 19 {
+		return 19
+	}
+	return target
+}

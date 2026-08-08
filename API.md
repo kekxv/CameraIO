@@ -337,7 +337,9 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
 ```json
 {
   "camera_id": 1,
-  "custom_name": "incident_20260802"
+  "custom_name": "incident_20260802",
+  "format": "mp4",
+  "bitrate": 0
 }
 ```
 
@@ -345,6 +347,8 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
 |---|---|---|---|
 | camera_id | uint | ✅ | 摄像头 ID |
 | custom_name | string | | 自定义文件名标识 |
+| format | string | | 新录像使用 `mp4`（默认）或流拷贝 `ts`；不接受 WebM |
+| bitrate | int | | 必须为 `0`，表示视频流拷贝，不进行软件编码 |
 
 **响应** (201)
 
@@ -354,16 +358,19 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
   "data": {
     "id": 105,
     "camera_id": 1,
-    "file_path": "data/recordings/1/1_20260802_143000_incident_20260802.mp4",
+    "file_path": "data/recordings/1/105",
     "start_time": "2026-08-02T14:30:00Z",
-    "status": "recording"
+    "status": "recording",
+    "format": "mp4",
+    "storage_mode": "segmented"
   }
 }
 ```
 
 ### POST /recordings/stop
 
-停止录像。FFmpeg 会优雅关闭，写入 MP4 的 moov atom。
+停止录像。分段 FFmpeg 会先接收优雅退出请求，进程退出后再扫描最后一个片段；可播放
+片段成为 `completed`，永久损坏的尾片段成为 `failed`，会话随后进入终态。
 
 **请求**
 
@@ -372,6 +379,10 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
   "recording_id": 105
 }
 ```
+
+分段会话的响应包含 `storage_mode: "segmented"`，不提供误导性的整会话
+`download_url`；请使用 timeline/play-at 片段回放。旧版单文件会话仍返回
+`download_url`。
 
 ### GET /recordings
 
@@ -383,6 +394,8 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
 |---|---|---|
 | camera_id | uint | 按摄像头筛选 |
 | status | string | 按状态筛选：`recording` / `completed` / `failed` |
+| start_time | string | RFC3339 UTC；返回结束时间晚于该时刻的会话 |
+| end_time | string | RFC3339 UTC；返回开始时间早于该时刻的会话 |
 | page | int | 页码（默认 1） |
 | page_size | int | 每页条数（默认 20） |
 
@@ -396,13 +409,14 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
       {
         "id": 105,
         "camera_id": 1,
-        "file_path": "data/recordings/1/1_20260802_143000.mp4",
+        "file_path": "data/recordings/1/105",
         "file_size": 52428800,
         "start_time": "2026-08-02T14:30:00Z",
         "end_time": "2026-08-02T15:00:00Z",
         "duration": 1800,
         "trigger_type": "api",
-        "status": "completed"
+        "status": "completed",
+        "storage_mode": "segmented"
       }
     ],
     "total": 42,
@@ -490,7 +504,8 @@ curl -G http://localhost:8080/api/v1/recordings/play-at \
 
 ### GET /recording-segments/:id/media
 
-以内联方式播放数据库中该片段对应的媒体文件，支持标准 HTTP Range
+以内联方式播放数据库中状态为 `completed`、时长和大小均为正数的片段文件；失败、
+尚未完成或零时长片段返回 404。端点支持标准 HTTP Range
 请求（包括后缀范围）。浏览器媒体元素无法设置请求头时可通过 `token`
 查询参数认证。
 

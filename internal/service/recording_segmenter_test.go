@@ -47,6 +47,71 @@ func TestBuildSegmentRecordingArgsCopiesOnlyProbedAACAudio(t *testing.T) {
 	}
 }
 
+func TestFinalSegmentScanKeepsPlayablePrefixAndMarksCorruptTailFailed(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	sessionDir := t.TempDir()
+	goodPath := filepath.Join(sessionDir, "20260808T120000Z.mp4")
+	badPath := filepath.Join(sessionDir, "20260808T120100Z.mp4")
+	if err := os.WriteFile(goodPath, []byte("playable prefix"), 0o644); err != nil {
+		t.Fatalf("write playable prefix: %v", err)
+	}
+	if err := os.WriteFile(badPath, []byte("permanently corrupt tail"), 0o644); err != nil {
+		t.Fatalf("write corrupt tail: %v", err)
+	}
+	recording := &model.Recording{
+		CameraID:    44,
+		FilePath:    sessionDir,
+		StartTime:   time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC),
+		Status:      model.RecordingStatusRecording,
+		Format:      model.FormatMP4,
+		StorageMode: model.StorageModeSegmented,
+	}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+
+	svc := NewRecorderService(db, pkg.DefaultConfig())
+	svc.segmentProbe = func(_ context.Context, path string) (time.Duration, error) {
+		if path == goodPath {
+			return time.Minute, nil
+		}
+		return 0, errors.New("invalid mp4 trailer")
+	}
+	if err := svc.recoverSegmentedRecording(recording); err != nil {
+		t.Fatalf("recover recording with corrupt tail: %v", err)
+	}
+
+	var segments []model.RecordingSegment
+	if err := db.Where("recording_id = ?", recording.ID).Order("sequence").Find(&segments).Error; err != nil {
+		t.Fatalf("load recovered segments: %v", err)
+	}
+	if len(segments) != 2 {
+		t.Fatalf("segment count = %d, want playable prefix and failed tail", len(segments))
+	}
+	if segments[0].Status != model.RecordingStatusCompleted || segments[0].DurationMS != 60000 {
+		t.Fatalf("playable prefix = status %q duration %d", segments[0].Status, segments[0].DurationMS)
+	}
+	if segments[1].Status != model.RecordingStatusFailed || segments[1].DurationMS != 0 {
+		t.Fatalf("corrupt tail = status %q duration %d", segments[1].Status, segments[1].DurationMS)
+	}
+	if _, err := os.Stat(badPath); err != nil {
+		t.Fatalf("corrupt tail was unsafely removed: %v", err)
+	}
+
+	var recovered model.Recording
+	if err := db.First(&recovered, recording.ID).Error; err != nil {
+		t.Fatalf("reload recovered recording: %v", err)
+	}
+	if recovered.Status != model.RecordingStatusCompleted {
+		t.Fatalf("recording status = %q, want completed terminal state", recovered.Status)
+	}
+	if recovered.FileSize != int64(len("playable prefix")) || recovered.Duration != 60 {
+		t.Fatalf("aggregate = size %d duration %d", recovered.FileSize, recovered.Duration)
+	}
+}
+
 func TestSegmentSupervisorStopUsesSingleWaitAndIngestsFinalFragment(t *testing.T) {
 	db, cleanup := setupRecorderTestDB(t)
 	defer cleanup()
@@ -572,7 +637,7 @@ func TestRecorderSweepRetriesStoppedSegmentFinalizationAfterTransientScanFailure
 			probeCalls++
 			if probeCalls == 1 {
 				close(firstProbe)
-				return 0, errors.New("transient probe failure")
+				return 0, &segmentProbeInfrastructureError{err: errors.New("transient probe failure")}
 			}
 			return time.Second, nil
 		},

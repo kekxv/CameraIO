@@ -78,6 +78,126 @@ func TestReconcileSegmentsRecoversUnindexedPlayableSegment(t *testing.T) {
 	}
 }
 
+func TestReconcileSegmentsSkipsLiveInMemorySegmentedTask(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+	root := t.TempDir()
+	recording := &model.Recording{
+		CameraID:    45,
+		StartTime:   time.Now().UTC(),
+		Status:      model.RecordingStatusRecording,
+		Format:      model.FormatMP4,
+		StorageMode: model.StorageModeSegmented,
+	}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+	sessionDir := filepath.Join(root, "45", fmt.Sprint(recording.ID))
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("create session directory: %v", err)
+	}
+	if err := db.Model(recording).Update("file_path", sessionDir).Error; err != nil {
+		t.Fatalf("store session path: %v", err)
+	}
+	activePath := filepath.Join(sessionDir, "20260808T120000Z.mp4")
+	if err := os.WriteFile(activePath, []byte("still being written"), 0o644); err != nil {
+		t.Fatalf("write active fragment: %v", err)
+	}
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = root
+	svc := NewRecorderService(db, cfg)
+	probeCalls := 0
+	svc.segmentProbe = func(context.Context, string) (time.Duration, error) {
+		probeCalls++
+		return 0, errors.New("active fragment must not be probed")
+	}
+	svc.tasks[recording.ID] = &recordTask{recording: recording, segmenter: &segmentSupervisor{}}
+
+	if err := svc.ReconcileSegments(); err != nil {
+		t.Fatalf("ReconcileSegments: %v", err)
+	}
+	if probeCalls != 0 {
+		t.Fatalf("active fragment probe calls = %d, want 0", probeCalls)
+	}
+	var current model.Recording
+	if err := db.First(&current, recording.ID).Error; err != nil {
+		t.Fatalf("reload live recording: %v", err)
+	}
+	if current.Status != model.RecordingStatusRecording {
+		t.Fatalf("live recording status = %q, want recording", current.Status)
+	}
+}
+
+func TestReconcileSegmentsLinearizesNewRecordingAdmission(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+	root := t.TempDir()
+	orphan := &model.Recording{CameraID: 46, StartTime: time.Now().UTC(), Status: model.RecordingStatusRecording, Format: model.FormatMP4, StorageMode: model.StorageModeSegmented}
+	if err := db.Create(orphan).Error; err != nil {
+		t.Fatalf("create orphan: %v", err)
+	}
+	orphanDir := filepath.Join(root, "46", fmt.Sprint(orphan.ID))
+	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
+		t.Fatalf("create orphan directory: %v", err)
+	}
+	if err := db.Model(orphan).Update("file_path", orphanDir).Error; err != nil {
+		t.Fatalf("store orphan path: %v", err)
+	}
+	orphanPath := filepath.Join(orphanDir, "20260808T120000Z.mp4")
+	if err := os.WriteFile(orphanPath, []byte("orphan fragment"), 0o644); err != nil {
+		t.Fatalf("write orphan: %v", err)
+	}
+	camera := &model.Camera{Name: "new start", RTSPUrl: "rtsp://camera/live", AccessProtocol: model.ProtocolRTSP}
+	if err := db.Create(camera).Error; err != nil {
+		t.Fatalf("create camera: %v", err)
+	}
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = root
+	svc := NewRecorderService(db, cfg)
+	probeEntered := make(chan struct{})
+	probeRelease := make(chan struct{})
+	svc.segmentProbe = func(context.Context, string) (time.Duration, error) {
+		close(probeEntered)
+		<-probeRelease
+		return time.Second, nil
+	}
+	commandCalled := make(chan struct{})
+	svc.segmentCommand = func(_ string, _ ...string) *exec.Cmd {
+		close(commandCalled)
+		cmd := exec.Command(os.Args[0], "-test.run=TestCooperativeSegmentFFmpegProcessHelper", "--")
+		cmd.Env = append(os.Environ(), "CAMERAIO_COOPERATIVE_SEGMENT_HELPER=1")
+		return cmd
+	}
+	reconcileDone := make(chan error, 1)
+	go func() { reconcileDone <- svc.ReconcileSegments() }()
+	<-probeEntered
+	type startResult struct {
+		recording *model.Recording
+		err       error
+	}
+	startDone := make(chan startResult, 1)
+	go func() {
+		recording, err := svc.StartRecording(&StartRecordingInput{CameraID: camera.ID, Format: model.FormatMP4})
+		startDone <- startResult{recording: recording, err: err}
+	}()
+	select {
+	case <-commandCalled:
+		t.Fatal("new recording process started before reconciliation completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(probeRelease)
+	if err := <-reconcileDone; err != nil {
+		t.Fatalf("ReconcileSegments: %v", err)
+	}
+	result := <-startDone
+	if result.err != nil {
+		t.Fatalf("StartRecording: %v", result.err)
+	}
+	if err := svc.StopRecording(result.recording.ID); err != nil {
+		t.Fatalf("StopRecording: %v", err)
+	}
+}
+
 func TestReconcileSegmentsQuarantinesZeroBytePartial(t *testing.T) {
 	db, cleanup := setupRecorderTestDB(t)
 	defer cleanup()

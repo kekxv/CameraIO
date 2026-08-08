@@ -760,6 +760,125 @@ func TestRecordingSegmentMediaServesSeekableInlineMP4FromDatabasePath(t *testing
 	}
 }
 
+func TestRecordingSegmentMediaRejectsNonservableFragments(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	mediaPath := filepath.Join(t.TempDir(), "segment.mp4")
+	if err := os.WriteFile(mediaPath, []byte("fragment"), 0o600); err != nil {
+		t.Fatalf("write media fixture: %v", err)
+	}
+	start := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	for index, test := range []struct {
+		name       string
+		status     string
+		durationMS int64
+	}{
+		{name: "failed", status: model.RecordingStatusFailed, durationMS: 1000},
+		{name: "incomplete", status: model.RecordingStatusRecording, durationMS: 1000},
+		{name: "zero duration", status: model.RecordingStatusCompleted, durationMS: 0},
+		{name: "negative duration", status: model.RecordingStatusCompleted, durationMS: -1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			segment := model.RecordingSegment{
+				RecordingID: 80 + uint(index), CameraID: 7, Sequence: 1,
+				FilePath: fmt.Sprintf("%s-%d", mediaPath, index), FileSize: 8,
+				StartTime: start, EndTime: start.Add(time.Second), DurationMS: test.durationMS,
+				Status: test.status, Format: model.FormatMP4,
+			}
+			if err := os.WriteFile(segment.FilePath, []byte("fragment"), 0o600); err != nil {
+				t.Fatalf("write segment: %v", err)
+			}
+			if err := db.Create(&segment).Error; err != nil {
+				t.Fatalf("create segment: %v", err)
+			}
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/recording-segments/%d/media?token=%s", segment.ID, token), nil)
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("media status = %d, want 404: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestListRecordingsParsesUTCOverlapFilters(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	from := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	for _, rec := range []model.Recording{
+		{CameraID: 1, FilePath: "overlap.mp4", StartTime: from.Add(-time.Minute), EndTime: timePointer(to.Add(time.Minute)), Status: model.RecordingStatusCompleted},
+		{CameraID: 1, FilePath: "ends-at-from.mp4", StartTime: from.Add(-time.Hour), EndTime: timePointer(from), Status: model.RecordingStatusCompleted},
+		{CameraID: 1, FilePath: "starts-at-to.mp4", StartTime: to, EndTime: timePointer(to.Add(time.Hour)), Status: model.RecordingStatusCompleted},
+	} {
+		if err := db.Create(&rec).Error; err != nil {
+			t.Fatalf("create recording: %v", err)
+		}
+	}
+	query := url.Values{"start_time": {from.Format(time.RFC3339)}, "end_time": {to.Format(time.RFC3339)}}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings?"+query.Encode(), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Recordings []model.Recording `json:"recordings"`
+			Total      int64             `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if response.Data.Total != 1 || len(response.Data.Recordings) != 1 || response.Data.Recordings[0].FilePath != "overlap.mp4" {
+		t.Fatalf("filtered recordings = %+v total=%d", response.Data.Recordings, response.Data.Total)
+	}
+}
+
+func TestListRecordingsRejectsInvalidTimeFilters(t *testing.T) {
+	h := setupTestHandler(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	for _, rawQuery := range []string{
+		"start_time=not-a-time",
+		"start_time=2026-08-08T10%3A00%3A00%2B08%3A00",
+		"start_time=2026-08-08T11%3A00%3A00Z&end_time=2026-08-08T10%3A00%3A00Z",
+	} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings?"+rawQuery, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("query %q status = %d, want 400: %s", rawQuery, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestStartRecordingReturnsServiceUnavailableAfterRecorderShutdown(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	camera := model.Camera{Name: "shutdown", RTSPUrl: "rtsp://camera/live", AccessProtocol: model.ProtocolRTSP}
+	if err := db.Create(&camera).Error; err != nil {
+		t.Fatalf("create camera: %v", err)
+	}
+	h.recorderSvc.Shutdown()
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/recordings/start", bytes.NewBufferString(fmt.Sprintf(`{"camera_id":%d,"format":"mp4"}`, camera.ID)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("start after shutdown status = %d, want 503: %s", w.Code, w.Body.String())
+	}
+}
+
+func timePointer(value time.Time) *time.Time { return &value }
+
 func TestDownloadRecording_NotFound(t *testing.T) {
 	h := setupTestHandler(t)
 	router := h.SetupRouter()
@@ -884,6 +1003,41 @@ func TestStopRecording_ReturnsDownloadURL(t *testing.T) {
 	wantURL := fmt.Sprintf("/api/v1/recordings/%d/download", recording.ID)
 	if resp.Data.DownloadURL != wantURL {
 		t.Fatalf("download_url = %q, want %q", resp.Data.DownloadURL, wantURL)
+	}
+}
+
+func TestStopSegmentedRecordingDoesNotAdvertiseLegacyDownload(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	end := time.Now().UTC()
+	recording := &model.Recording{
+		CameraID: 7, FilePath: filepath.Join(t.TempDir(), "7", "105"),
+		StartTime: end.Add(-time.Minute), EndTime: &end, Status: model.RecordingStatusCompleted,
+		Format: model.FormatMP4, StorageMode: model.StorageModeSegmented,
+	}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/recordings/stop", bytes.NewBufferString(fmt.Sprintf(`{"recording_id":%d}`, recording.ID)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("stop status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, advertised := resp.Data["download_url"]; advertised {
+		t.Fatalf("segmented stop advertised a legacy full-session download: %+v", resp.Data)
+	}
+	if resp.Data["storage_mode"] != model.StorageModeSegmented {
+		t.Fatalf("storage_mode = %v, want segmented", resp.Data["storage_mode"])
 	}
 }
 

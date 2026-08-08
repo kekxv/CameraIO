@@ -77,6 +77,12 @@ func (s *RecorderService) checkRecordingAdmission(cameraID uint) error {
 // shutdown. Discovery is intentionally limited to the configured
 // recordings/<camera-id>/<recording-id> directory shape.
 func (s *RecorderService) ReconcileSegments() error {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
+	return s.reconcileSegmentsLocked()
+}
+
+func (s *RecorderService) reconcileSegmentsLocked() error {
 	root, err := filepath.Abs(s.cfg.RecordingsDir)
 	if err != nil {
 		return fmt.Errorf("resolve recordings root: %w", err)
@@ -118,6 +124,10 @@ func (s *RecorderService) ReconcileSegments() error {
 				}
 				return fmt.Errorf("load recording session %d: %w", recordingID, err)
 			}
+			if s.recordingTaskActive(recording.ID) {
+				processed[recording.ID] = struct{}{}
+				continue
+			}
 			sessionDir := filepath.Join(cameraDir, sessionEntry.Name())
 			storedIdentity, storedErr := canonicalFilesystemPath(recording.FilePath)
 			sessionIdentity, sessionErr := canonicalFilesystemPath(sessionDir)
@@ -137,6 +147,9 @@ func (s *RecorderService) ReconcileSegments() error {
 	}
 	for index := range recordings {
 		recording := &recordings[index]
+		if s.recordingTaskActive(recording.ID) {
+			continue
+		}
 		if _, alreadyProcessed := processed[recording.ID]; alreadyProcessed {
 			continue
 		}
@@ -163,6 +176,13 @@ func (s *RecorderService) ReconcileSegments() error {
 		}
 	}
 	return nil
+}
+
+func (s *RecorderService) recordingTaskActive(recordingID uint) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, active := s.tasks[recordingID]
+	return active
 }
 
 func (s *RecorderService) reconcileMissingSegmentDirectory(recording *model.Recording, sessionIdentity, rootIdentity string) error {

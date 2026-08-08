@@ -94,8 +94,14 @@ export const stopStream = (id) => api.post(`/streams/${id}/stop`)
 
 // ---------- Recordings ----------
 
+export const normalizeResourceSafeRecordingOptions = (options = {}) => ({
+  ...options,
+  format: options.format === 'ts' ? 'ts' : 'mp4',
+  bitrate: 0,
+})
+
 export const startRecording = (cameraId, options = {}) =>
-  api.post('/recordings/start', { camera_id: cameraId, ...options }).then((r) => r.data.data)
+  api.post('/recordings/start', { camera_id: cameraId, ...normalizeResourceSafeRecordingOptions(options) }).then((r) => r.data.data)
 
 export const stopRecording = (recordingId) =>
   api.post('/recordings/stop', { recording_id: recordingId })

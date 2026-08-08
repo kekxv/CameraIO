@@ -57,6 +57,18 @@ test('recording time helpers call the timeline and play-at APIs with UTC paramet
   }
 })
 
+test('resource-safe recording options normalize persisted unsafe choices', () => {
+  assert.deepEqual(apiModule.normalizeResourceSafeRecordingOptions({ format: 'webm', bitrate: 1000, with_audio: true }), {
+    format: 'mp4',
+    bitrate: 0,
+    with_audio: true,
+  })
+  assert.deepEqual(apiModule.normalizeResourceSafeRecordingOptions({ format: 'ts', bitrate: 0 }), {
+    format: 'ts',
+    bitrate: 0,
+  })
+})
+
 test('captureSnapshot requests the native JPEG endpoint as a blob', async () => {
   const originalAdapter = api.defaults.adapter
   let request

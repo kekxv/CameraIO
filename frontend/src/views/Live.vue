@@ -239,7 +239,7 @@
             <label class="block text-xs font-medium text-slate-600 mb-1.5">录像格式</label>
             <div class="flex rounded-lg border border-slate-200 overflow-hidden">
               <button
-                v-for="fmt in [{v:'mp4',l:'MP4'},{v:'webm',l:'WebM'},{v:'ts',l:'TS'}]"
+                v-for="fmt in [{v:'mp4',l:'MP4'},{v:'ts',l:'TS'}]"
                 :key="fmt.v"
                 @click="recordFormat = fmt.v"
                 class="flex-1 py-1.5 text-xs font-medium transition-colors border-r border-slate-200 last:border-r-0"
@@ -249,27 +249,16 @@
               </button>
             </div>
             <p class="text-[10px] text-slate-400 mt-1">
-              {{ recordFormat === 'mp4' ? '兼容性最好，推荐' : recordFormat === 'webm' ? '体积小，浏览器原生播放' : '适合直播流，无 moov 问题' }}
+              {{ recordFormat === 'mp4' ? '分段 MP4 流拷贝，推荐' : 'TS 流拷贝' }}
             </p>
           </div>
 
-          <!-- 码率选项 -->
+          <!-- 资源安全模式固定使用相机原码率流拷贝 -->
           <div class="mb-3">
-            <label class="block text-xs font-medium text-slate-600 mb-1.5">码率（控制文件大小）</label>
-            <div class="flex rounded-lg border border-slate-200 overflow-hidden">
-              <button
-                v-for="opt in bitrateOptions"
-                :key="opt.value"
-                @click="recordBitrate = opt.value"
-                class="flex-1 py-1.5 text-xs font-medium transition-colors border-r border-slate-200 last:border-r-0"
-                :class="recordBitrate === opt.value ? 'bg-primary-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-            <p class="text-[10px] text-slate-400 mt-1">
-              {{ recordBitrate === 0 ? '原画质（相机码率，体积大）' : `约 ${(recordBitrate * 600 / 8 / 1024).toFixed(1)}MB/10分钟` }}
-            </p>
+            <label class="block text-xs font-medium text-slate-600 mb-1.5">码率</label>
+			<p class="text-[10px] text-slate-400 mt-1">
+			  原画质（相机码率，视频流拷贝）
+			</p>
           </div>
 
           <!-- 音频开关 -->
@@ -334,12 +323,6 @@ const recordTarget = ref(null)
 const recordFormat = ref('mp4')
 const recordWithAudio = ref(false)
 const recordBitrate = ref(0) // kbps, 0=流拷贝原画质
-const bitrateOptions = [
-  { value: 0, label: '原画质' },
-  { value: 512, label: '512k' },
-  { value: 1000, label: '1M' },
-  { value: 2000, label: '2M' },
-]
 const nowStr = ref('')
 let clockTimer = null
 let eventWs = null

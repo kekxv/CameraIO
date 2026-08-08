@@ -24,14 +24,17 @@ import (
 
 // RecorderService 管理录像任务：Stream-Copy 将 RTSP 流直接写入 MP4。
 type RecorderService struct {
-	db      *gorm.DB
-	cfg     *pkg.Config
-	mu      sync.Mutex
-	tasks   map[uint]*recordTask // recordingID → task
-	ctx     context.Context
-	cancel  context.CancelFunc
-	streams *StreamService // 用于 GB28181 录像（从 NALU 流录制）
-	events  *EventBus
+	db           *gorm.DB
+	cfg          *pkg.Config
+	admissionMu  sync.RWMutex
+	shuttingDown bool
+	shutdownOnce sync.Once
+	mu           sync.Mutex
+	tasks        map[uint]*recordTask // recordingID → task
+	ctx          context.Context
+	cancel       context.CancelFunc
+	streams      *StreamService // 用于 GB28181 录像（从 NALU 流录制）
+	events       *EventBus
 
 	segmentCommand    segmentCommandFactory
 	probeAAC          func(context.Context, string) (bool, error)
@@ -200,19 +203,30 @@ func waitForTaskExit(task *recordTask, timeout time.Duration) bool {
 // Shutdown 停止所有正在进行的录像任务（优雅关闭时调用）。
 // 会更新数据库状态，避免重启后留下"录制中"的孤儿记录。
 func (s *RecorderService) Shutdown() {
-	s.cancel()
-	s.mu.Lock()
-	recordingIDs := make([]uint, 0, len(s.tasks))
-	for recordingID := range s.tasks {
-		recordingIDs = append(recordingIDs, recordingID)
-	}
-	s.mu.Unlock()
-
-	for _, recordingID := range recordingIDs {
-		if err := s.StopRecording(recordingID); err != nil {
-			log.Printf("[recorder] shutdown recording %d: %v", recordingID, err)
+	s.BeginShutdown()
+	s.shutdownOnce.Do(func() {
+		s.cancel()
+		s.mu.Lock()
+		recordingIDs := make([]uint, 0, len(s.tasks))
+		for recordingID := range s.tasks {
+			recordingIDs = append(recordingIDs, recordingID)
 		}
-	}
+		s.mu.Unlock()
+
+		for _, recordingID := range recordingIDs {
+			if err := s.StopRecording(recordingID); err != nil {
+				log.Printf("[recorder] shutdown recording %d: %v", recordingID, err)
+			}
+		}
+	})
+}
+
+// BeginShutdown permanently closes admission before server shutdown work can
+// snapshot or stop active recorder processes.
+func (s *RecorderService) BeginShutdown() {
+	s.admissionMu.Lock()
+	s.shuttingDown = true
+	s.admissionMu.Unlock()
 }
 
 // ---------- Input DTOs ----------
@@ -238,10 +252,23 @@ type RecordingValidationError struct {
 
 func (e *RecordingValidationError) Error() string { return e.Message }
 
+// RecorderUnavailableError reports that recorder lifecycle shutdown has
+// permanently closed admission for new processes.
+type RecorderUnavailableError struct {
+	Message string
+}
+
+func (e *RecorderUnavailableError) Error() string { return e.Message }
+
 // ---------- 录像控制 ----------
 
 // StartRecording 开始录制指定摄像头的 RTSP 流。
 func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Recording, error) {
+	s.admissionMu.RLock()
+	defer s.admissionMu.RUnlock()
+	if s.shuttingDown {
+		return nil, &RecorderUnavailableError{Message: "recorder is shutting down"}
+	}
 	// 查询摄像头
 	var cam model.Camera
 	if err := s.db.First(&cam, in.CameraID).Error; err != nil {
@@ -809,7 +836,9 @@ func (s *RecorderService) finalizeSegmentedRecording(recordingID, cameraID uint)
 		return fmt.Errorf("load segmented recording: %w", err)
 	}
 	var segmentCount int64
-	if err := s.db.Model(&model.RecordingSegment{}).Where("recording_id = ? AND file_size > 0", recordingID).Count(&segmentCount).Error; err != nil {
+	if err := s.db.Model(&model.RecordingSegment{}).
+		Where("recording_id = ? AND status = ? AND duration_ms > 0 AND file_size > 0", recordingID, model.RecordingStatusCompleted).
+		Count(&segmentCount).Error; err != nil {
 		return fmt.Errorf("count recording segments: %w", err)
 	}
 	status := model.RecordingStatusCompleted
@@ -855,6 +884,8 @@ func (s *RecorderService) ReconcileOrphaned() {
 // single-file recordings. Segmented recovery is exclusively handled by
 // ReconcileSegments so paths outside the configured root are never scanned.
 func (s *RecorderService) ReconcileLegacyOrphaned() {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
 	var recs []model.Recording
 	if err := s.db.Where("status IN ? AND (storage_mode IS NULL OR storage_mode <> ?)", []string{model.RecordingStatusRecording, model.RecordingStatusFailed}, model.StorageModeSegmented).Find(&recs).Error; err != nil {
 		log.Printf("[recorder] reconcile orphaned: %v", err)
