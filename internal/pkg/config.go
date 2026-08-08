@@ -8,10 +8,14 @@ import (
 
 // Config 服务配置。
 type Config struct {
-	Addr          string `json:"addr"`
-	DBPath        string `json:"db_path"`
-	JWTSecret     string `json:"jwt_secret"`
-	RecordingsDir string `json:"recordings_dir"`
+	Addr                        string `json:"addr"`
+	DBPath                      string `json:"db_path"`
+	JWTSecret                   string `json:"jwt_secret"`
+	RecordingsDir               string `json:"recordings_dir"`
+	RecordingSegmentSeconds     int    `json:"recording_segment_seconds"`
+	RecordingRetentionDays      int    `json:"recording_retention_days"`
+	RecordingCleanupFreePercent int    `json:"recording_cleanup_free_percent"`
+	RecordingStopFreePercent    int    `json:"recording_stop_free_percent"`
 
 	// GB28181 SIP 服务配置
 	SIPListenAddr string `json:"sip_listen_addr"` // SIP 信令监听地址 (如 ":5060")
@@ -26,15 +30,19 @@ type Config struct {
 // DefaultConfig 返回内置默认配置（不读取环境变量、不读取配置文件）。
 func DefaultConfig() *Config {
 	return &Config{
-		Addr:          ":8080",
-		DBPath:        "data/cameradio.db",
-		JWTSecret:     "change-me-in-production",
-		RecordingsDir: "data/recordings",
-		SIPListenAddr: ":5060",
-		SIPServerID:   "34020000002000000001",
-		SIPRealm:      "3402000000",
-		RTPPortMin:    10000,
-		RTPPortMax:    11000,
+		Addr:                        ":8080",
+		DBPath:                      "data/cameradio.db",
+		JWTSecret:                   "change-me-in-production",
+		RecordingsDir:               "data/recordings",
+		RecordingSegmentSeconds:     300,
+		RecordingRetentionDays:      30,
+		RecordingCleanupFreePercent: 15,
+		RecordingStopFreePercent:    5,
+		SIPListenAddr:               ":5060",
+		SIPServerID:                 "34020000002000000001",
+		SIPRealm:                    "3402000000",
+		RTPPortMin:                  10000,
+		RTPPortMax:                  11000,
 	}
 }
 
@@ -96,6 +104,18 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("CAMERAIO_RECORDINGS_DIR"); v != "" {
 		cfg.RecordingsDir = v
 	}
+	if v := os.Getenv("CAMERAIO_RECORDING_SEGMENT_SECONDS"); v != "" {
+		cfg.RecordingSegmentSeconds = getEnvInt("CAMERAIO_RECORDING_SEGMENT_SECONDS", cfg.RecordingSegmentSeconds)
+	}
+	if v := os.Getenv("CAMERAIO_RECORDING_RETENTION_DAYS"); v != "" {
+		cfg.RecordingRetentionDays = getEnvInt("CAMERAIO_RECORDING_RETENTION_DAYS", cfg.RecordingRetentionDays)
+	}
+	if v := os.Getenv("CAMERAIO_RECORDING_CLEANUP_FREE_PERCENT"); v != "" {
+		cfg.RecordingCleanupFreePercent = getEnvInt("CAMERAIO_RECORDING_CLEANUP_FREE_PERCENT", cfg.RecordingCleanupFreePercent)
+	}
+	if v := os.Getenv("CAMERAIO_RECORDING_STOP_FREE_PERCENT"); v != "" {
+		cfg.RecordingStopFreePercent = getEnvInt("CAMERAIO_RECORDING_STOP_FREE_PERCENT", cfg.RecordingStopFreePercent)
+	}
 	if v := os.Getenv("CAMERAIO_SIP_ADDR"); v != "" {
 		cfg.SIPListenAddr = v
 	}
@@ -111,6 +131,28 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("CAMERAIO_RTP_PORT_MAX"); v != "" {
 		cfg.RTPPortMax = getEnvInt("CAMERAIO_RTP_PORT_MAX", cfg.RTPPortMax)
 	}
+	validateRecordingConfig(cfg)
+}
+
+func validateRecordingConfig(cfg *Config) {
+	cfg.RecordingSegmentSeconds = clampInt(cfg.RecordingSegmentSeconds, 60, 1800)
+	cfg.RecordingRetentionDays = clampInt(cfg.RecordingRetentionDays, 1, 3650)
+	cfg.RecordingCleanupFreePercent = clampInt(cfg.RecordingCleanupFreePercent, 1, 99)
+	cfg.RecordingStopFreePercent = clampInt(cfg.RecordingStopFreePercent, 1, 99)
+	if cfg.RecordingStopFreePercent >= cfg.RecordingCleanupFreePercent {
+		cfg.RecordingStopFreePercent = 5
+		cfg.RecordingCleanupFreePercent = 15
+	}
+}
+
+func clampInt(value, min, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 func getEnv(key, fallback string) string {

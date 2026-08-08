@@ -90,6 +90,10 @@ cd frontend && npm run dev
 | `CAMERAIO_DB_PATH` | `data/cameradio.db` | SQLite 数据库路径 |
 | `CAMERAIO_JWT_SECRET` | `change-me-in-production` | JWT 签名密钥 |
 | `CAMERAIO_RECORDINGS_DIR` | `data/recordings` | 录像文件存储目录 |
+| `CAMERAIO_RECORDING_SEGMENT_SECONDS` | `300` | MP4 录像分段时长（60–1800 秒） |
+| `CAMERAIO_RECORDING_RETENTION_DAYS` | `30` | 录像保留天数（1–3650 天） |
+| `CAMERAIO_RECORDING_CLEANUP_FREE_PERCENT` | `15` | 磁盘可用空间低于此比例时开始清理（1–99%） |
+| `CAMERAIO_RECORDING_STOP_FREE_PERCENT` | `5` | 磁盘可用空间低于此比例时停止录像（1–99%，必须低于清理阈值） |
 | `CAMERAIO_SIP_ADDR` | `:5060` | GB28181 SIP 信令监听地址 |
 | `CAMERAIO_SIP_SERVER_ID` | `34020000002000000001` | SIP 服务器 20 位国标编码 |
 | `CAMERAIO_SIP_REALM` | `3402000000` | SIP 域 |
@@ -98,6 +102,13 @@ cd frontend && npm run dev
 | `CAMERAIO_CONFIG` | `config.json` | 配置文件路径（不存在则自动创建默认配置） |
 
 配置优先级：环境变量 > 配置文件 > 内置默认值。
+
+### Single-host safe mode
+
+Live preview remains an independent, unchanged path: MJPEG is used for live
+viewing, and m3u8 is not used for live viewing. Continuous archive recording
+uses MP4 stream-copy; WebM is legacy/manual only. Plan storage capacity at
+approximately 1 Mbps ≈ 10.8 GB/day/camera.
 
 ### 首次运行
 
