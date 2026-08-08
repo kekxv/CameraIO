@@ -98,6 +98,9 @@ func (s *segmentSupervisor) start() error {
 		_ = stdin.Close()
 		return fmt.Errorf("start ffmpeg: %w", err)
 	}
+	if err := pkg.LowerRecordingProcessPriority(cmd.Process.Pid); err != nil {
+		log.Printf("[recorder] recording %d could not lower archive segmenter priority: %v", s.recording.ID, err)
+	}
 	s.cmd = cmd
 	s.stdin = stdin
 	s.done = make(chan struct{})
