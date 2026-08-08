@@ -416,9 +416,102 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
 
 获取单个录像记录。
 
+### GET /recordings/timeline
+
+按摄像头和 UTC 时间范围查询可播放的录像片段。`from` 和 `to` 必须是
+RFC3339 UTC 时间，查询区间为半开区间 `[from, to)`，最长 24 小时。
+
+```bash
+curl -G http://localhost:8080/api/v1/recordings/timeline \
+  -H "Authorization: Bearer <token>" \
+  --data-urlencode "camera_id=1" \
+  --data-urlencode "from=2026-08-08T10:00:00Z" \
+  --data-urlencode "to=2026-08-08T11:00:00Z"
+```
+
+**响应** (200)
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "segments": [
+      {
+        "id": 301,
+        "recording_id": 105,
+        "start_time": "2026-08-08T10:00:00Z",
+        "end_time": "2026-08-08T10:01:00Z",
+        "duration_ms": 60000,
+        "file_size": 4194304,
+        "status": "completed"
+      }
+    ]
+  }
+}
+```
+
+### GET /recordings/play-at
+
+解析指定摄像头在某一 UTC 时刻应播放的片段和片内偏移。`at` 必须是
+RFC3339 UTC 时间；该时刻没有录像覆盖时返回 404。
+
+```bash
+curl -G http://localhost:8080/api/v1/recordings/play-at \
+  -H "Authorization: Bearer <token>" \
+  --data-urlencode "camera_id=1" \
+  --data-urlencode "at=2026-08-08T10:00:02.500Z"
+```
+
+**响应** (200)
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "segment": {
+      "id": 301,
+      "recording_id": 105,
+      "start_time": "2026-08-08T10:00:00Z",
+      "end_time": "2026-08-08T10:01:00Z",
+      "duration_ms": 60000,
+      "file_size": 4194304,
+      "status": "completed"
+    },
+    "media_url": "/api/v1/recording-segments/301/media",
+    "offset_ms": 2500,
+    "next_segment_id": 302
+  }
+}
+```
+
+`next_segment_id` 仅在紧邻的下一片段可连续播放时提供，否则为 `null`。
+
+### GET /recording-segments/:id/media
+
+以内联方式播放数据库中该片段对应的媒体文件，支持标准 HTTP Range
+请求（包括后缀范围）。浏览器媒体元素无法设置请求头时可通过 `token`
+查询参数认证。
+
+```html
+<video controls src="/api/v1/recording-segments/301/media?token=<jwt>"></video>
+```
+
+```bash
+curl http://localhost:8080/api/v1/recording-segments/301/media \
+  -H "Authorization: Bearer <token>" \
+  -H "Range: bytes=1048576-2097151" \
+  -o segment-part.mp4
+```
+
+成功的范围响应为 `206 Partial Content`，并包含 `Content-Range`、
+`Accept-Ranges: bytes`、媒体 `Content-Type` 和 `Content-Disposition: inline`。
+
 ### GET /recordings/:id/download
 
-下载 MP4 录像文件。支持 HTTP Range 断点续传。
+下载旧版单文件录像或执行显式下载。响应保持
+`Content-Disposition: attachment`，并支持 HTTP Range 断点续传。
 
 **断点续传示例**
 

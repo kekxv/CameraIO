@@ -104,6 +104,18 @@ func (s *RecorderService) ResolvePlaybackPoint(cameraID uint, at time.Time) (*Pl
 	return point, nil
 }
 
+// GetRecordingSegment returns the stored segment metadata used to locate its
+// media file. Callers must use this database-backed path rather than accepting
+// a path from an HTTP request.
+func (s *RecorderService) GetRecordingSegment(id uint) (*model.RecordingSegment, error) {
+	var segment model.RecordingSegment
+	result := s.db.First(&segment, id)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &segment, nil
+}
+
 func timelineSegment(segment model.RecordingSegment) TimelineSegment {
 	return TimelineSegment{
 		ID:          segment.ID,

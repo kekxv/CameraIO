@@ -9,6 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -498,6 +501,262 @@ func TestRecordingListFilters(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("list with status filter status = %d, want 200", w.Code)
+	}
+}
+
+func TestRecordingTimelineRejectsMalformedUTCTimestamps(t *testing.T) {
+	h := setupTestHandler(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+
+	for _, query := range []url.Values{
+		{"camera_id": {"1"}, "from": {"not-a-time"}, "to": {"2026-08-08T11:00:00Z"}},
+		{"camera_id": {"1"}, "from": {"2026-08-08T10:00:00Z"}, "to": {"2026-08-08T11:00:00"}},
+		{"camera_id": {"1"}, "from": {"2026-08-08T10:00:00+01:00"}, "to": {"2026-08-08T11:00:00Z"}},
+	} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings/timeline?"+query.Encode(), nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("timeline malformed UTC status = %d, want 400: %s", w.Code, w.Body.String())
+		}
+		var resp response
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode timeline validation response: %v", err)
+		}
+		if resp.Message != "from and to must be RFC3339 UTC timestamps" {
+			t.Fatalf("timeline malformed UTC message = %q, want RFC3339 UTC validation", resp.Message)
+		}
+	}
+}
+
+func TestRecordingTimelineRejectsRangesLongerThan24Hours(t *testing.T) {
+	h := setupTestHandler(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	query := url.Values{
+		"camera_id": {"1"},
+		"from":      {"2026-08-08T10:00:00Z"},
+		"to":        {"2026-08-09T10:00:01Z"},
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings/timeline?"+query.Encode(), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("timeline over 24 hours status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	var resp response
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode timeline range response: %v", err)
+	}
+	if resp.Message != "timeline range must not exceed 24 hours" {
+		t.Fatalf("timeline over 24 hours message = %q, want range validation", resp.Message)
+	}
+}
+
+func TestRecordingTimelineReturnsIntervalSpanningSegmentForRequestedCamera(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	start := time.Date(2026, 8, 8, 9, 55, 0, 0, time.UTC)
+	wanted := model.RecordingSegment{
+		RecordingID: 41,
+		CameraID:    7,
+		Sequence:    1,
+		FilePath:    filepath.Join(t.TempDir(), "wanted.mp4"),
+		FileSize:    4096,
+		StartTime:   start,
+		EndTime:     start.Add(10 * time.Minute),
+		DurationMS:  600000,
+		Status:      model.RecordingStatusCompleted,
+		Format:      model.FormatMP4,
+	}
+	if err := db.Create(&wanted).Error; err != nil {
+		t.Fatalf("create wanted segment: %v", err)
+	}
+	otherCamera := wanted
+	otherCamera.ID = 0
+	otherCamera.RecordingID = 42
+	otherCamera.CameraID = 8
+	otherCamera.FilePath = filepath.Join(t.TempDir(), "other.mp4")
+	if err := db.Create(&otherCamera).Error; err != nil {
+		t.Fatalf("create other-camera segment: %v", err)
+	}
+	query := url.Values{
+		"camera_id": {"7"},
+		"from":      {"2026-08-08T10:00:00Z"},
+		"to":        {"2026-08-08T10:01:00Z"},
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings/timeline?"+query.Encode(), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("timeline status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Segments []service.TimelineSegment `json:"segments"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode timeline response: %v", err)
+	}
+	if len(resp.Data.Segments) != 1 || resp.Data.Segments[0].ID != wanted.ID {
+		t.Fatalf("timeline segments = %+v, want only segment %d", resp.Data.Segments, wanted.ID)
+	}
+}
+
+func TestRecordingPlayAtReturnsStructuredNotFoundForUnknownPoint(t *testing.T) {
+	h := setupTestHandler(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	query := url.Values{"camera_id": {"1"}, "at": {"2026-08-08T10:00:00Z"}}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings/play-at?"+query.Encode(), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("play-at missing point status = %d, want 404: %s", w.Code, w.Body.String())
+	}
+	var resp response
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode play-at error response: %v", err)
+	}
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("play-at error code = %d, want 404", resp.Code)
+	}
+}
+
+func TestRecordingPlayAtReturnsMediaURLAndOffset(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	start := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	current := model.RecordingSegment{
+		RecordingID: 51,
+		CameraID:    9,
+		Sequence:    1,
+		FilePath:    filepath.Join(t.TempDir(), "current.mp4"),
+		FileSize:    4096,
+		StartTime:   start,
+		EndTime:     start.Add(time.Minute),
+		DurationMS:  60000,
+		Status:      model.RecordingStatusCompleted,
+		Format:      model.FormatMP4,
+	}
+	if err := db.Create(&current).Error; err != nil {
+		t.Fatalf("create current segment: %v", err)
+	}
+	next := current
+	next.ID = 0
+	next.Sequence = 2
+	next.FilePath = filepath.Join(t.TempDir(), "next.mp4")
+	next.StartTime = current.EndTime.Add(time.Second)
+	next.EndTime = next.StartTime.Add(time.Minute)
+	if err := db.Create(&next).Error; err != nil {
+		t.Fatalf("create next segment: %v", err)
+	}
+	query := url.Values{"camera_id": {"9"}, "at": {"2026-08-08T10:00:02.500Z"}}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings/play-at?"+query.Encode(), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("play-at status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Segment       service.TimelineSegment `json:"segment"`
+			MediaURL      string                  `json:"media_url"`
+			OffsetMS      int64                   `json:"offset_ms"`
+			NextSegmentID *uint                   `json:"next_segment_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode play-at response: %v", err)
+	}
+	wantMediaURL := fmt.Sprintf("/api/v1/recording-segments/%d/media", current.ID)
+	if resp.Data.Segment.ID != current.ID || resp.Data.MediaURL != wantMediaURL || resp.Data.OffsetMS != 2500 {
+		t.Fatalf("play-at data = %+v, want segment=%d media_url=%q offset_ms=2500", resp.Data, current.ID, wantMediaURL)
+	}
+	if resp.Data.NextSegmentID == nil || *resp.Data.NextSegmentID != next.ID {
+		t.Fatalf("next_segment_id = %v, want %d", resp.Data.NextSegmentID, next.ID)
+	}
+}
+
+func TestRecordingSegmentMediaServesSeekableInlineMP4FromDatabasePath(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	mediaBytes := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	mediaPath := filepath.Join(t.TempDir(), "segment.mp4")
+	if err := os.WriteFile(mediaPath, mediaBytes, 0o600); err != nil {
+		t.Fatalf("write media fixture: %v", err)
+	}
+	secretPath := filepath.Join(t.TempDir(), "secret.mp4")
+	if err := os.WriteFile(secretPath, []byte("must-not-be-served"), 0o600); err != nil {
+		t.Fatalf("write secret fixture: %v", err)
+	}
+	segment := model.RecordingSegment{
+		RecordingID: 61,
+		CameraID:    10,
+		Sequence:    1,
+		FilePath:    mediaPath,
+		FileSize:    int64(len(mediaBytes)),
+		StartTime:   time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC),
+		EndTime:     time.Date(2026, 8, 8, 10, 1, 0, 0, time.UTC),
+		DurationMS:  60000,
+		Status:      model.RecordingStatusCompleted,
+		Format:      model.FormatMP4,
+	}
+	if err := db.Create(&segment).Error; err != nil {
+		t.Fatalf("create media segment: %v", err)
+	}
+	mediaURL := fmt.Sprintf("/api/v1/recording-segments/%d/media?%s", segment.ID, url.Values{
+		"token": {token},
+		"path":  {secretPath},
+	}.Encode())
+
+	for _, test := range []struct {
+		name        string
+		rangeHeader string
+		wantBody    []byte
+		wantRange   string
+	}{
+		{name: "explicit range", rangeHeader: "bytes=2-5", wantBody: []byte{2, 3, 4, 5}, wantRange: "bytes 2-5/10"},
+		{name: "suffix range", rangeHeader: "bytes=-4", wantBody: []byte{6, 7, 8, 9}, wantRange: "bytes 6-9/10"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, mediaURL, nil)
+			req.Header.Set("Range", test.rangeHeader)
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusPartialContent {
+				t.Fatalf("media status = %d, want 206: %s", w.Code, w.Body.String())
+			}
+			if got := w.Body.Bytes(); !bytes.Equal(got, test.wantBody) {
+				t.Fatalf("media body = %v, want %v", got, test.wantBody)
+			}
+			if got := w.Header().Get("Content-Range"); got != test.wantRange {
+				t.Fatalf("Content-Range = %q, want %q", got, test.wantRange)
+			}
+			if got := w.Header().Get("Content-Type"); got != "video/mp4" {
+				t.Fatalf("Content-Type = %q, want video/mp4", got)
+			}
+			if got := w.Header().Get("Content-Disposition"); got != "inline" {
+				t.Fatalf("Content-Disposition = %q, want inline", got)
+			}
+			if got := w.Header().Get("Accept-Ranges"); got != "bytes" {
+				t.Fatalf("Accept-Ranges = %q, want bytes", got)
+			}
+		})
 	}
 }
 

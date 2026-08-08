@@ -32,12 +32,12 @@ func (h *Handler) SetupRouter() *gin.Engine {
 		protected.PUT("/cameras/:id", h.UpdateCamera)
 		protected.DELETE("/cameras/:id", h.DeleteCamera)
 		protected.POST("/cameras/:id/sync-time", h.SyncCameraTime)
-			protected.POST("/cameras/:id/test", h.TestCameraConnection)
-			protected.POST("/cameras/test-by-ip", h.TestCameraConnectionByIP)
-			protected.POST("/cameras/discover-channels", h.DiscoverNVRChannels)
-			protected.POST("/cameras/scan-network", h.ScanNetwork)
-			protected.POST("/cameras/:id/set-codec", h.SetCameraCodec)
-			protected.POST("/cameras/:id/set-network", h.SetCameraNetwork)
+		protected.POST("/cameras/:id/test", h.TestCameraConnection)
+		protected.POST("/cameras/test-by-ip", h.TestCameraConnectionByIP)
+		protected.POST("/cameras/discover-channels", h.DiscoverNVRChannels)
+		protected.POST("/cameras/scan-network", h.ScanNetwork)
+		protected.POST("/cameras/:id/set-codec", h.SetCameraCodec)
+		protected.POST("/cameras/:id/set-network", h.SetCameraNetwork)
 
 		// Local Cameras
 		protected.GET("/local-cameras", h.ListLocalCameras)
@@ -54,9 +54,12 @@ func (h *Handler) SetupRouter() *gin.Engine {
 		protected.POST("/recordings/start", h.StartRecording)
 		protected.POST("/recordings/stop", h.StopRecording)
 		protected.GET("/recordings", h.ListRecordings)
+		protected.GET("/recordings/timeline", h.RecordingTimeline)
+		protected.GET("/recordings/play-at", h.RecordingPlayAt)
 		protected.GET("/recordings/:id", h.GetRecording)
 		protected.DELETE("/recordings/:id", h.DeleteRecording)
 		protected.GET("/recordings/:id/download", h.DownloadRecording)
+		protected.GET("/recording-segments/:id/media", h.RecordingSegmentMedia)
 
 		// 定时录像计划
 		protected.GET("/schedules", h.ListSchedules)
