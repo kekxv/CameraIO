@@ -636,6 +636,7 @@ const timeSearch = reactive({
 
 const playbackCoordinator = createRecordingPlaybackCoordinator({
   resolvePlayback: resolveRecordingPlayback,
+  loadTimeline: getRecordingTimeline,
   mediaUrl: getSegmentMediaUrl,
   onStateChange: (state) => {
     playbackState.value = state

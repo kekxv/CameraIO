@@ -281,6 +281,98 @@ test('recording playback seeks after metadata and swaps only when the preloaded 
   assert.equal(second.pauseCalls, 1)
 })
 
+test('recording playback discovers metadata beyond the searched boundary and preloads the third segment', async () => {
+  const makeVideo = () => ({
+    src: '',
+    play() { return Promise.resolve() },
+    load() {},
+    pause() {},
+    removeAttribute(name) { if (name === 'src') this.src = '' },
+  })
+  const firstVideo = makeVideo()
+  const secondVideo = makeVideo()
+  const first = { id: 1, start_time: '2026-08-08T10:59:00Z', end_time: '2026-08-08T11:00:00Z', status: 'completed' }
+  const second = { id: 2, start_time: '2026-08-08T11:00:00Z', end_time: '2026-08-08T11:01:00Z', status: 'completed' }
+  const third = { id: 3, start_time: '2026-08-08T11:01:00Z', end_time: '2026-08-08T11:02:00Z', status: 'completed' }
+  const coordinator = recordingBehavior.createRecordingPlaybackCoordinator({
+    mediaUrl: (id) => `/media/${id}.mp4`,
+    loadTimeline: async () => ({ segments: [second] }),
+    resolvePlayback: async ({ at }) => {
+      if (at === '2026-08-08T10:59:30.000Z') {
+        return { segment: first, offset_ms: 30000, next_segment_id: second.id }
+      }
+      if (at === '2026-08-08T11:00:00.000Z') {
+        return { segment: second, offset_ms: 0, next_segment_id: third.id }
+      }
+      throw new Error(`unexpected playback time ${at}`)
+    },
+  })
+  coordinator.attach(0, firstVideo)
+  coordinator.attach(1, secondVideo)
+
+  await coordinator.open({
+    cameraId: 7,
+    at: '2026-08-08T10:59:30.000Z',
+    segments: [first],
+  })
+  await coordinator.canPlay(1)
+  await coordinator.ended(0)
+
+  assert.equal(coordinator.state.activeSlot, 1)
+  assert.equal(firstVideo.src, '/media/3.mp4')
+  assert.equal(coordinator.state.point.segment.id, second.id)
+})
+
+test('recording playback ignores a delayed swap after the dialog closes and reopens', async () => {
+  let finishStalePlay
+  const stalePlay = new Promise((resolve) => { finishStalePlay = resolve })
+  const firstVideo = {
+    src: '',
+    play() { return Promise.resolve() },
+    load() {},
+    pause() {},
+    removeAttribute(name) { if (name === 'src') this.src = '' },
+  }
+  const secondVideo = {
+    ...firstVideo,
+    play() { return stalePlay },
+  }
+  const oldFirst = { id: 1, start_time: '2026-08-08T10:00:00Z', end_time: '2026-08-08T10:01:00Z' }
+  const oldSecond = { id: 2, start_time: '2026-08-08T10:01:00Z', end_time: '2026-08-08T10:02:00Z' }
+  const reopened = { id: 10, start_time: '2026-08-08T12:00:00Z', end_time: '2026-08-08T12:01:00Z' }
+  const resolveCalls = []
+  const coordinator = recordingBehavior.createRecordingPlaybackCoordinator({
+    mediaUrl: (id) => `/media/${id}.mp4`,
+    resolvePlayback: async (params) => {
+      resolveCalls.push(params)
+      if (params.camera_id === 7 && params.at === '2026-08-08T10:00:30.000Z') {
+        return { segment: oldFirst, offset_ms: 30000, next_segment_id: oldSecond.id }
+      }
+      if (params.camera_id === 8 && params.at === '2026-08-08T12:00:10.000Z') {
+        return { segment: reopened, offset_ms: 10000, next_segment_id: null }
+      }
+      throw new Error('stale playback lookup')
+    },
+  })
+  coordinator.attach(0, firstVideo)
+  coordinator.attach(1, secondVideo)
+
+  await coordinator.open({ cameraId: 7, at: '2026-08-08T10:00:30.000Z', segments: [oldFirst, oldSecond] })
+  await coordinator.canPlay(1)
+  const oldSwap = coordinator.ended(0)
+  coordinator.close()
+  await coordinator.open({ cameraId: 8, at: '2026-08-08T12:00:10.000Z', segments: [reopened] })
+  finishStalePlay()
+  await oldSwap
+
+  assert.deepEqual(resolveCalls, [
+    { camera_id: 7, at: '2026-08-08T10:00:30.000Z' },
+    { camera_id: 8, at: '2026-08-08T12:00:10.000Z' },
+  ])
+  assert.equal(coordinator.state.point.segment.id, reopened.id)
+  assert.equal(coordinator.state.error, '')
+})
+
 test('recording playback exposes a gap state for a missing selected time', async () => {
   const coordinator = recordingBehavior.createRecordingPlaybackCoordinator({
     mediaUrl: (id) => `/media/${id}.mp4`,
@@ -316,4 +408,28 @@ test('recording center preloads the hidden player without autoplaying it', async
   assert.equal(videos.length, 2)
   assert.equal(videos.filter((video) => video.includes(' autoplay')).length, 1)
   assert.equal(videos.filter((video) => video.includes('style="display:none;"')).length, 1)
+})
+
+test('recording center preserves preview and download for legacy single-file recordings', async () => {
+  const legacy = {
+    id: 19,
+    camera_id: 7,
+    start_time: '2026-08-08T09:00:00Z',
+    duration: 600,
+    file_size: 1000,
+    trigger_type: 'schedule',
+    status: 'completed',
+    storage_mode: 'legacy',
+    format: 'mp4',
+  }
+  const html = await renderRecordings({
+    recordings: [legacy],
+    previewRec: legacy,
+    timePlaybackOpen: false,
+  })
+
+  assert.match(html, /录像预览 #19/)
+  assert.match(html, /<video[^>]*src="\/legacy-download"/)
+  assert.equal((html.match(/href="\/legacy-download"/g) || []).length, 2)
+  assert.doesNotMatch(html, /导出尚未实现/)
 })

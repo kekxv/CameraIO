@@ -182,11 +182,12 @@ export const buildRecordingCoverage = (segments, from, to) => {
   return parts
 }
 
-export const createRecordingPlaybackCoordinator = ({ resolvePlayback, mediaUrl, onStateChange }) => {
+export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeline, mediaUrl, onStateChange }) => {
   const videos = [null, null]
   const ready = [false, false]
   let segmentByID = new Map()
   let cameraID = null
+  let playbackAt = null
   let generation = 0
   let pendingSwap = false
   let state = {
@@ -233,6 +234,23 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, mediaUrl, 
     setSource(nextSlot(), segmentID)
   }
 
+  const findSegmentAtBoundary = async (segmentID, boundary, operationCameraID) => {
+    const known = segmentByID.get(segmentID)
+    if (known || !loadTimeline) return known || { id: segmentID }
+
+    const boundaryMS = new Date(boundary).getTime()
+    if (!Number.isFinite(boundaryMS)) return { id: segmentID }
+    const continuityWindowMS = 2000
+    const data = await loadTimeline({
+      camera_id: operationCameraID,
+      from: new Date(boundaryMS - continuityWindowMS - 1).toISOString(),
+      to: new Date(boundaryMS + continuityWindowMS + 1).toISOString(),
+    })
+    const segment = (data.segments || []).find((candidate) => candidate.id === segmentID)
+    if (segment) segmentByID.set(segment.id, segment)
+    return segment || { id: segmentID }
+  }
+
   const swap = async () => {
     if (!state.open) return
     const oldSlot = state.activeSlot
@@ -240,9 +258,22 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, mediaUrl, 
     const nextID = state.point && state.point.next_segment_id
     if (!nextID || !ready[newSlot]) return
 
+    const operationGeneration = generation
+    const operationCameraID = cameraID
+    const operationAt = playbackAt
+    const boundary = state.point.segment && state.point.segment.end_time
+    const isCurrentOperation = () => (
+      operationGeneration === generation &&
+      operationCameraID === cameraID &&
+      operationAt === playbackAt &&
+      state.open &&
+      state.activeSlot === newSlot &&
+      state.point &&
+      state.point.segment &&
+      state.point.segment.id === nextID
+    )
     pendingSwap = false
-    const segment = segmentByID.get(nextID) || { id: nextID }
-    const nextPoint = { segment, offset_ms: 0, next_segment_id: null }
+    const nextPoint = { segment: segmentByID.get(nextID) || { id: nextID }, offset_ms: 0, next_segment_id: null }
     setState({ activeSlot: newSlot, point: nextPoint, loadingNext: false })
     if (videos[newSlot] && videos[newSlot].play) {
       try {
@@ -250,19 +281,23 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, mediaUrl, 
       } catch {}
     }
 
-    if (!segment.start_time) return
-    const currentGeneration = generation
+    if (!isCurrentOperation()) return
     try {
+      const segment = await findSegmentAtBoundary(nextID, boundary, operationCameraID)
+      if (!isCurrentOperation() || !segment.start_time) return
+      nextPoint.segment = segment
+      const segmentAt = new Date(segment.start_time).toISOString()
       const resolved = await resolvePlayback({
-        camera_id: cameraID,
-        at: new Date(segment.start_time).toISOString(),
+        camera_id: operationCameraID,
+        at: segmentAt,
       })
-      if (currentGeneration !== generation || !state.open || state.activeSlot !== newSlot) return
+      if (!isCurrentOperation()) return
+      playbackAt = segmentAt
       setState({ point: resolved })
       if (resolved.next_segment_id) setSource(oldSlot, resolved.next_segment_id)
       else clearVideo(videos[oldSlot], false)
     } catch (err) {
-      if (currentGeneration !== generation) return
+      if (!isCurrentOperation()) return
       setState({ error: err.message || '无法加载下一录像片段' })
     }
   }
@@ -279,6 +314,7 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, mediaUrl, 
       const currentGeneration = generation
       if (state.open) clearAllVideos(true)
       cameraID = cameraId
+      playbackAt = at
       segmentByID = new Map((segments || []).map((segment) => [segment.id, segment]))
       pendingSwap = false
       state = {
@@ -326,6 +362,8 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, mediaUrl, 
     close() {
       generation += 1
       pendingSwap = false
+      cameraID = null
+      playbackAt = null
       clearAllVideos(true)
       state = {
         open: false,
