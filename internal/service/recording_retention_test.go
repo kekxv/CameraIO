@@ -418,11 +418,15 @@ func TestReconcileSegmentsCanonicalizesRelativeIndexedPath(t *testing.T) {
 	db, cleanup := setupRecorderTestDB(t)
 	defer cleanup()
 
-	root := t.TempDir()
 	workingDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
+	root, err := os.MkdirTemp(workingDir, "cameraio-relative-root-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	relativeRoot, err := filepath.Rel(workingDir, root)
 	if err != nil {
 		t.Fatal(err)
@@ -560,6 +564,9 @@ func TestReconcileSegmentsDefersWhenProbeInfrastructureIsUnavailable(t *testing.
 }
 
 func TestProbeSegmentDurationTreatsFFmpegSubstitutionAsInfrastructure(t *testing.T) {
+	if os.Getenv("CAMERAIO_FAKE_FFMPEG_EXIT_2") == "1" {
+		os.Exit(2)
+	}
 	if os.Getenv("CAMERAIO_FFPROBE_SUBSTITUTION_HELPER") != "1" {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestProbeSegmentDurationTreatsFFmpegSubstitutionAsInfrastructure$")
 		cmd.Env = append(os.Environ(), "CAMERAIO_FFPROBE_SUBSTITUTION_HELPER=1")
@@ -569,14 +576,11 @@ func TestProbeSegmentDurationTreatsFFmpegSubstitutionAsInfrastructure(t *testing
 		return
 	}
 
-	fakeFFmpeg := filepath.Join(t.TempDir(), "ffmpeg")
-	if err := os.WriteFile(fakeFFmpeg, []byte("#!/bin/sh\nexit 2\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CAMERAIO_FFMPEG_PATH", fakeFFmpeg)
+	t.Setenv("CAMERAIO_FFMPEG_PATH", os.Args[0])
 	if !pkg.EnsureFFmpegAsync() {
 		t.Fatal("fake ffmpeg path was not selected")
 	}
+	t.Setenv("CAMERAIO_FAKE_FFMPEG_EXIT_2", "1")
 	_, err := probeSegmentDuration(context.Background(), filepath.Join(t.TempDir(), "segment.mp4"))
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
