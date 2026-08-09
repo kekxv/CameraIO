@@ -485,6 +485,86 @@ test('recording timeline selection sends the exact segment timestamp to play-at'
   }
 })
 
+test('segmented recording preview sends its exact ISO start timestamp to play-at', async () => {
+  globalThis.localStorage = { getItem: () => null, removeItem: () => {} }
+  const api = recordingBehavior.default
+  const originalAdapter = api.defaults.adapter
+  let request
+  api.defaults.adapter = async (config) => {
+    request = config
+    return {
+      data: { code: 0, data: { segment: { id: 18 }, offset_ms: 0, next_segment_id: null, segments: [] } },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+
+  try {
+    const setup = await loadRecordingsSetup()
+    setup.openRecordingPreview({
+      id: 18,
+      camera_id: 7,
+      start_time: '2026-08-09T07:50:37.123Z',
+      storage_mode: 'segmented',
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+
+    assert.deepEqual(request.params, {
+      camera_id: 7,
+      at: '2026-08-09T07:50:37.123Z',
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+})
+
+test('reversed history dates render a filter error without replacing prior recordings', async () => {
+  const api = recordingBehavior.default
+  const originalAdapter = api.defaults.adapter
+  const priorRecording = {
+    id: 44,
+    camera_id: 7,
+    start_time: '2026-08-08T10:10:00Z',
+    duration: 60,
+    status: 'completed',
+    storage_mode: 'segmented',
+  }
+  let requestCount = 0
+  api.defaults.adapter = async (config) => {
+    requestCount += 1
+    return {
+      data: { code: 0, data: { recordings: [priorRecording], total: 1 } },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+
+  try {
+    const setup = await loadRecordingsSetup()
+    await setup.loadRecordings()
+    setup.timeSearch.startDate = '2026-08-09'
+    setup.timeSearch.endDate = '2026-08-02'
+    await setup.applyHistoryFilters()
+
+    assert.equal(requestCount, 1)
+    assert.deepEqual(setup.recordings.value, [priorRecording])
+    assert.equal(setup.total.value, 1)
+    assert.equal(setup.historyError.value, '结束日期必须不早于开始日期')
+    const html = await renderRecordings({
+      recordings: setup.recordings.value,
+      total: setup.total.value,
+      historyError: setup.historyError.value,
+    })
+    assert.match(html, /结束日期必须不早于开始日期/)
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+})
+
 test('recording history query and clear reset paging with the expected date filters', async () => {
   const api = recordingBehavior.default
   const originalAdapter = api.defaults.adapter

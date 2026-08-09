@@ -184,11 +184,9 @@ export const createRecordingHistoryCoordinator = ({ listRecordings: loadRecordin
     if (onStateChange) onStateChange({ ...state })
   }
 
-  const fail = (err) => {
+  const reportError = (err) => {
     generation += 1
     setState({
-      recordings: [],
-      total: 0,
       loading: false,
       error: err.message || '录像历史查询失败',
     })
@@ -212,7 +210,7 @@ export const createRecordingHistoryCoordinator = ({ listRecordings: loadRecordin
         if (requestGeneration === generation) setState({ loading: false })
       }
     },
-    fail,
+    reportError,
   }
 }
 

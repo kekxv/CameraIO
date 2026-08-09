@@ -663,7 +663,7 @@ const loadRecordings = async () => {
     Object.assign(params, normalizeRecordingDateRange(timeSearch))
     await historyCoordinator.load(params)
   } catch (err) {
-    historyCoordinator.fail(err)
+    historyCoordinator.reportError(err)
   }
 }
 
