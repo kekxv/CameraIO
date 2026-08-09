@@ -26,7 +26,6 @@
             plain
             :aria-expanded="showCameraPicker"
             aria-controls="live-camera-picker"
-            @click="showCameraPicker = !showCameraPicker"
           >
             <AppIcon name="camera" class="w-4 h-4" />
             <span>选择摄像头</span>
@@ -44,18 +43,17 @@
               </button>
             </div>
             <el-checkbox-group v-model="pickerSelectedCameraIDs" class="block max-h-56 overflow-y-auto border-y border-slate-100 py-1">
-              <label
+              <div
                 v-for="cam in cameras"
                 :key="cam.id"
                 class="flex items-center px-2 py-2 rounded-md cursor-pointer hover:bg-slate-50"
               >
-                <el-checkbox :label="cam.id" />
-                <span class="ml-2 min-w-0 flex-1">
+                <el-checkbox :label="cam.id" class="min-w-0 flex-1">
                   <span class="block text-sm text-slate-700 truncate">{{ cam.name }}</span>
                   <span class="block text-xs text-slate-400 truncate">{{ cam.ip }}</span>
-                </span>
+                </el-checkbox>
                 <span class="w-2 h-2 rounded-full" :class="cam.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'"></span>
-              </label>
+              </div>
             </el-checkbox-group>
             <div class="compat-flex-gap-2 justify-between mt-3">
               <button type="button" class="ui-button-secondary" @click="clearCameraSelection">清空</button>
@@ -338,18 +336,6 @@ const gridLabel = (n) => {
   if (n === 4) return '2×2'
   if (n === 9) return '3×3'
   return '4×4'
-}
-
-const isCameraSelected = (cameraId) => selectedCameraIDs.value === null || selectedCameraIDs.value.includes(cameraId)
-
-const toggleCameraSelection = (cameraId) => {
-  const selected = selectedCameraIDs.value === null
-    ? cameras.value.map((camera) => camera.id)
-    : selectedCameraIDs.value.slice()
-  const index = selected.indexOf(cameraId)
-  if (index === -1) selected.push(cameraId)
-  else selected.splice(index, 1)
-  selectedCameraIDs.value = selected
 }
 
 const clearCameraSelection = () => {

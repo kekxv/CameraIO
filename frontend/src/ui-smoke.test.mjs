@@ -232,8 +232,18 @@ test('live view lets operators select the cameras shown in the preview grid', ()
   const live = readFileSync(new URL('./views/Live.vue', import.meta.url), 'utf8')
   assert.match(live, /选择摄像头/)
   assert.match(live, /selectedCameraIDs/)
-  assert.match(live, /toggleCameraSelection/)
   assert.match(live, /clearCameraSelection/)
+})
+
+test('Element Plus owns the live picker trigger and selection control labels', () => {
+  const cameras = readFileSync(new URL('./views/Cameras.vue', import.meta.url), 'utf8')
+  const live = readFileSync(new URL('./views/Live.vue', import.meta.url), 'utf8')
+
+  assert.match(live, /<el-popover v-model:visible="showCameraPicker" trigger="click"/)
+  assert.doesNotMatch(live, /@click="showCameraPicker = !showCameraPicker"/)
+  assert.doesNotMatch(live, /toggleCameraSelection/)
+  assert.doesNotMatch(cameras, /<label\b[^>]*>(?:(?!<\/label>)[\s\S])*?<el-(?:radio|checkbox)\b/)
+  assert.doesNotMatch(live, /<label\b[^>]*>(?:(?!<\/label>)[\s\S])*?<el-checkbox\b/)
 })
 
 test('recordings view preserves recording and schedule actions in a responsive surface', () => {

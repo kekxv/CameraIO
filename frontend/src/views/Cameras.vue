@@ -212,42 +212,42 @@
             <label class="block text-sm font-medium text-slate-700 mb-1">接入协议</label>
             <div class="grid grid-cols-3 gap-2">
               <el-radio-group v-model="form.access_protocol" class="grid grid-cols-3 gap-2">
-              <label
+              <el-radio
+                label="rtsp"
                 class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
                 :class="form.access_protocol === 'rtsp'
                   ? 'border-primary-500 bg-primary-50 text-primary-700'
                   : 'border-slate-300 hover:bg-slate-50'"
               >
-                <el-radio label="rtsp" />
                 <div>
                   <div class="text-sm font-medium">RTSP</div>
                   <div class="text-xs text-slate-500">主动拉流</div>
                 </div>
-              </label>
-              <label
+              </el-radio>
+              <el-radio
+                label="gb28181"
                 class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
                 :class="form.access_protocol === 'gb28181'
                   ? 'border-primary-500 bg-primary-50 text-primary-700'
                   : 'border-slate-300 hover:bg-slate-50'"
               >
-                <el-radio label="gb28181" />
                 <div>
                   <div class="text-sm font-medium">GB28181</div>
                   <div class="text-xs text-slate-500">国标 SIP</div>
                 </div>
-              </label>
-              <label
+              </el-radio>
+              <el-radio
+                label="local"
                 class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
                 :class="form.access_protocol === 'local'
                   ? 'border-primary-500 bg-primary-50 text-primary-700'
                   : 'border-slate-300 hover:bg-slate-50'"
               >
-                <el-radio label="local" />
                 <div>
                   <div class="text-sm font-medium">本地</div>
                   <div class="text-xs text-slate-500">USB/系统</div>
                 </div>
-              </label>
+              </el-radio>
               </el-radio-group>
           </div>
           </div>
@@ -365,7 +365,7 @@
                 <input type="checkbox" @change="toggleAllChannels" :checked="allChannelsSelected" class="rounded text-primary-600" />
                 <span>全选 ({{ selectedChannels.length }}/{{ discoveredChannels.length }})</span>
               </div>
-              <label
+              <div
                 v-for="ch in discoveredChannels"
                 :key="ch.channel"
                 class="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 text-xs"
@@ -376,7 +376,7 @@
                 <span v-if="ch.rtsp_url" class="text-[10px] text-emerald-600 font-mono truncate max-w-[140px]" :title="ch.rtsp_url">
                   {{ ch.rtsp_url.replace(/^rtsp:\/\/[^@]*@/, 'rtsp://***@') }}
                 </span>
-              </label>
+              </div>
             </el-checkbox-group>
           </div>
 
