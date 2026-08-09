@@ -39,7 +39,7 @@
 
       <el-tab-pane label="定时录像" name="schedules">
         <template #label><span class="compat-flex-gap-1"><AppIcon name="clock" class="w-4 h-4" /><span>定时录像</span></span></template>
-        <el-card shadow="never" class="mb-4"><div class="flex flex-wrap items-center justify-between gap-3"><p class="text-sm text-slate-600">定时计划：到时间自动开始录像，离开时间范围自动停止，每天重复。</p><el-button type="primary" @click="openScheduleDialog(null)">新建计划</el-button></div></el-card>
+        <el-card shadow="never" class="mb-4"><div class="compat-flex-gap-3 flex flex-wrap items-center justify-between"><p class="text-sm text-slate-600">定时计划：到时间自动开始录像，离开时间范围自动停止，每天重复。</p><el-button type="primary" @click="openScheduleDialog(null)">新建计划</el-button></div></el-card>
         <el-empty v-if="schedules.length === 0" description="暂无定时录像计划" class="py-12" />
         <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"><el-card v-for="sch in schedules" :key="sch.id" shadow="never" :class="{ 'opacity-60': !sch.enabled }"><template #header><div class="flex items-center justify-between"><div><strong>{{ sch.name }}</strong><p class="text-xs text-slate-500 mt-1">{{ cameraName(sch.camera_id) }}</p></div><el-tag :type="sch.enabled ? 'success' : 'info'" effect="plain">{{ sch.enabled ? '启用' : '停用' }}</el-tag></div></template><div class="space-y-2 text-sm text-slate-600"><p>{{ sch.start_time }} - {{ sch.end_time }}</p><p>{{ daysLabel(sch.days) }}</p><p>{{ (sch.format || 'mp4').toUpperCase() }}<el-tag v-if="sch.with_audio" size="small" effect="plain" class="ml-2">含音频</el-tag></p></div><div class="mt-4 compat-flex-gap-2"><el-button plain @click="toggleSchedule(sch)">{{ sch.enabled ? '停用' : '启用' }}</el-button><el-button plain @click="openScheduleDialog(sch)">编辑</el-button><el-button plain type="danger" @click="handleDeleteSchedule(sch)">删除</el-button></div></el-card></div>
       </el-tab-pane>
@@ -48,8 +48,7 @@
     <el-dialog v-model="previewOpen" :title="previewRec ? `录像预览 #${previewRec.id}` : '录像预览'" width="760px" @closed="closePreview">
       <p v-if="previewRec" class="text-xs text-slate-500 mb-3">{{ cameraName(previewRec.camera_id) }} · {{ formatTime(previewRec.start_time) }}</p>
       <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" class="mb-3" />
-      <div v-else-if="previewLoading" class="py-12 text-center text-slate-500">正在加载录像...</div>
-      <div v-else class="compat-aspect-video bg-black flex items-center justify-center">
+      <div v-else class="relative compat-aspect-video bg-black flex items-center justify-center">
         <video
           v-if="previewRec"
           :ref="(element) => attachPreviewVideo(0, element)"
@@ -75,6 +74,7 @@
           @canplay="handlePreviewCanPlay(1)"
           @ended="handlePreviewEnded(1)"
         ></video>
+        <div v-if="previewLoading" class="absolute inset-0 flex items-center justify-center text-sm text-white bg-black/70">正在加载录像...</div>
       </div>
       <template #footer><a v-if="previewRec && !isSegmentedRecording(previewRec)" :href="downloadUrl(previewRec.id)" :download="`recording_${previewRec.id}.${previewRec.format || 'mp4'}`"><el-button type="primary">下载</el-button></a><el-button plain @click="previewOpen = false">关闭</el-button></template>
     </el-dialog>

@@ -278,8 +278,9 @@ test('recordings list preview restores guarded native segment continuation and C
   assert.match(recordings, /:ref="\(element\) => attachPreviewVideo\(0, element\)"/)
   assert.match(recordings, /@ended="handlePreviewEnded\(0\)"/)
   assert.match(recordings, /previewCoordinator\.close\(\)/)
-  assert.match(recordings, /compat-flex-gap-3/)
-  assert.doesNotMatch(recordings, /flex flex-wrap items-end gap-3/)
+  assert.equal((recordings.match(/compat-flex-gap-3/g) || []).length, 2, 'filter and schedule header must use Chrome 72-compatible spacing')
+  assert.doesNotMatch(recordings, /items-end gap-3/)
+  assert.doesNotMatch(recordings, /justify-between gap-3/)
 })
 
 test('recording history filters use local date boundaries and playback resolves independently', () => {
@@ -543,6 +544,17 @@ test('recording preview renders native sequential video slots when opened from t
 
   assert.equal(videos.length, 2)
   assert.equal(videos.filter((video) => video.includes(' autoplay')).length, 1)
+})
+
+test('loading a segmented list preview keeps both coordinator video slots mounted', async () => {
+  const html = await renderRecordings({
+    previewRec: { id: 18, camera_id: 7, start_time: '2026-08-08T10:10:00Z', storage_mode: 'segmented' },
+    previewOpen: true,
+    previewLoading: true,
+  })
+
+  assert.match(html, /正在加载录像/)
+  assert.equal((html.match(/<video/g) || []).length, 2)
 })
 
 test('segmented recording preview sends its exact ISO start timestamp to play-at', async () => {
