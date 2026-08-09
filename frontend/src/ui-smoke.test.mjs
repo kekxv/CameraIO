@@ -9,6 +9,30 @@ import { renderToString } from '@vue/server-renderer'
 const css = readFileSync(new URL('./assets/main.css', import.meta.url), 'utf8')
 const recordingBehavior = await import('./api.js')
 
+test('Element Plus is registered globally with Chinese locale and a restrained plain theme', () => {
+  const packageManifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const main = readFileSync(new URL('./main.js', import.meta.url), 'utf8')
+
+  assert.ok(packageManifest.dependencies['element-plus'], 'Element Plus must be an application dependency')
+  assert.match(main, /import ElementPlus from 'element-plus'/)
+  assert.match(main, /import zhCn from 'element-plus\/es\/locale\/lang\/zh-cn'/)
+  assert.match(main, /import 'element-plus\/dist\/index\.css'/)
+  assert.match(main, /app\.use\(ElementPlus, \{ locale: zhCn \}\)/)
+
+  for (const variable of [
+    '--el-bg-color: #ffffff',
+    '--el-bg-color-page: #f6f8fc',
+    '--el-border-color: #dbe3ee',
+    '--el-text-color-primary: #172033',
+    '--el-color-primary: #2563eb',
+    '--el-box-shadow-light: 0 4px 12px rgba(15, 23, 42, 0.06)',
+    '--el-button-bg-color: var(--surface)',
+    '--el-button-border-color: var(--line)',
+  ]) {
+    assert.ok(css.includes(variable), `missing plain Element Plus theme variable ${variable}`)
+  }
+})
+
 const loadRecordingsSetup = async () => {
   const source = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
   const descriptor = parse(source).descriptor

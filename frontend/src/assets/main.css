@@ -21,6 +21,27 @@
   --radius: 10px;
   --shadow-card: 0 8px 24px rgba(15, 23, 42, 0.06);
   --chrome72-flex-gap-fallback: 1;
+
+  /* Element Plus plain design system */
+  --el-color-primary: #2563eb;
+  --el-color-primary-light-3: #93c5fd;
+  --el-color-primary-light-5: #bfdbfe;
+  --el-color-primary-light-7: #dbeafe;
+  --el-color-primary-light-8: #eff6ff;
+  --el-color-primary-light-9: #f5f9ff;
+  --el-color-primary-dark-2: #1d4ed8;
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f6f8fc;
+  --el-fill-color-blank: #ffffff;
+  --el-fill-color-light: #f8fafc;
+  --el-border-color: #dbe3ee;
+  --el-border-color-light: #e2e8f0;
+  --el-border-color-lighter: #edf2f7;
+  --el-text-color-primary: #172033;
+  --el-text-color-regular: #475569;
+  --el-text-color-secondary: #64748b;
+  --el-border-radius-base: 8px;
+  --el-box-shadow-light: 0 4px 12px rgba(15, 23, 42, 0.06);
 }
 
 * { box-sizing: border-box; }
@@ -51,6 +72,18 @@ select:focus,
 textarea:focus {
   outline: 3px solid rgba(37, 99, 235, 0.28);
   outline-offset: 2px;
+}
+
+.el-button.is-plain {
+  --el-button-bg-color: var(--surface);
+  --el-button-text-color: #334155;
+  --el-button-border-color: var(--line);
+  --el-button-hover-text-color: var(--primary);
+  --el-button-hover-bg-color: var(--primary-soft);
+  --el-button-hover-border-color: #bfdbfe;
+  --el-button-active-text-color: var(--primary-hover);
+  --el-button-active-bg-color: var(--primary-soft);
+  --el-button-active-border-color: #93c5fd;
 }
 
 .app-shell { min-height: 100vh; background: var(--canvas); }
