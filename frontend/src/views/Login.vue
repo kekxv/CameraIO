@@ -10,48 +10,44 @@
       </div>
 
       <!-- 登录卡片 -->
-      <div class="ui-card p-7">
+      <el-card class="login-card">
         <h2 class="text-lg font-semibold text-slate-800 mb-4">登录</h2>
 
-        <form @submit.prevent="handleLogin" class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">用户名</label>
-            <input
+        <el-form @submit.prevent="handleLogin" class="login-form">
+          <el-form-item label="用户名">
+            <el-input
               v-model="username"
               type="text"
               required
               autocomplete="username"
-              class="ui-input"
               placeholder="admin"
             />
-          </div>
+          </el-form-item>
 
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">密码</label>
-            <input
+          <el-form-item label="密码">
+            <el-input
               v-model="password"
               type="password"
               required
               autocomplete="current-password"
-              class="ui-input"
               placeholder="••••••••"
+              show-password
             />
-          </div>
+          </el-form-item>
 
-          <div v-if="error" class="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-            {{ error }}
-          </div>
+          <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
 
-          <button
-            type="submit"
+          <el-button
+            native-type="submit"
+            type="primary"
             :disabled="loading"
-            class="ui-button-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+            class="w-full"
           >
             <span v-if="loading">登录中...</span>
             <span v-else>登录</span>
-          </button>
-        </form>
-      </div>
+          </el-button>
+        </el-form>
+      </el-card>
 
       <p class="text-center text-xs text-slate-500 mt-4">
         默认账户: admin / admin

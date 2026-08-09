@@ -38,17 +38,17 @@
     </div>
 
     <!-- 错误 -->
-    <div v-else-if="status.state === 'error'" class="ui-alert border-x-0 border-t-0 rounded-none px-4 py-2.5 gap-3">
-      <AppIcon name="warning" class="w-4 h-4 text-red-500 flex-shrink-0" />
-      <span class="text-sm text-red-700">FFmpeg 不可用：{{ status.error }}。可手动安装 FFmpeg 或设置 <code class="font-mono text-xs bg-red-100 px-1 rounded">CAMERAIO_FFMPEG_PATH</code> 环境变量。</span>
-    </div>
+    <el-alert v-else-if="status.state === 'error'" type="error" :closable="false" show-icon class="ffmpeg-error-alert">
+      <template #title>
+        FFmpeg 不可用：{{ status.error }}。可手动安装 FFmpeg 或设置 <code class="font-mono text-xs bg-red-100 px-1 rounded">CAMERAIO_FFMPEG_PATH</code> 环境变量。
+      </template>
+    </el-alert>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getFFmpegStatus } from '../api'
-import AppIcon from './AppIcon.vue'
 
 const status = ref(null)
 let timer = null

@@ -182,6 +182,29 @@ test('application shell uses a light navigation surface and an accessible mobile
   assert.match(css, /\.layout-sidebar \{ top: 60px; right: auto;/)
 })
 
+test('shell, login, and FFmpeg feedback use Element Plus while retaining authentication and mobile navigation behavior', () => {
+  const layout = readFileSync(new URL('./components/Layout.vue', import.meta.url), 'utf8')
+  const login = readFileSync(new URL('./views/Login.vue', import.meta.url), 'utf8')
+  const ffmpegBanner = readFileSync(new URL('./components/FfmpegBanner.vue', import.meta.url), 'utf8')
+
+  assert.match(layout, /<el-container/)
+  assert.match(layout, /<el-aside/)
+  assert.match(layout, /<el-menu/)
+  assert.match(layout, /aria-label="切换导航"/)
+  assert.match(layout, /mobileNavOpen = !mobileNavOpen/)
+  assert.match(layout, /@click="handleLogout"/)
+  assert.match(layout, /const handleLogout = \(\) => logout\(\)/)
+
+  assert.match(login, /<el-card/)
+  assert.match(login, /<el-form/)
+  assert.match(login, /<el-alert/)
+  assert.match(login, /@submit\.prevent="handleLogin"/)
+  assert.match(login, /await login\(username\.value, password\.value\)/)
+  assert.match(login, /router\.push\('\/cameras'\)/)
+
+  assert.match(ffmpegBanner, /<el-alert/)
+})
+
 test('camera management keeps operational actions and uses compatible layout primitives', () => {
   const cameras = readFileSync(new URL('./views/Cameras.vue', import.meta.url), 'utf8')
   assert.match(cameras, /handleScanLAN/)
