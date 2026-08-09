@@ -8,7 +8,7 @@
       <el-tab-pane label="录像列表" name="recordings">
         <template #label><span class="compat-flex-gap-1"><AppIcon name="film" class="w-4 h-4" /><span>录像列表</span></span></template>
         <el-card shadow="never" class="mb-4">
-          <div class="flex flex-wrap items-end gap-3">
+          <div class="compat-flex-gap-3 flex flex-wrap items-end">
             <div><label class="block text-xs font-medium text-slate-500 mb-1">摄像头</label><el-select v-model="filter.cameraId" clearable placeholder="全部" class="w-40" @change="applyHistoryFilters"><el-option label="全部" :value="null" /><el-option v-for="cam in cameras" :key="cam.id" :label="cam.name" :value="cam.id" /></el-select></div>
             <div><label class="block text-xs font-medium text-slate-500 mb-1">状态</label><el-select v-model="filter.status" clearable placeholder="全部" class="w-32" @change="applyHistoryFilters"><el-option label="录制中" value="recording" /><el-option label="已完成" value="completed" /><el-option label="失败" value="failed" /></el-select></div>
             <div><label class="block text-xs font-medium text-slate-500 mb-1">录像日期</label><el-date-picker v-model="dateRange" type="daterange" range-separator="至" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" /></div>
@@ -49,7 +49,33 @@
       <p v-if="previewRec" class="text-xs text-slate-500 mb-3">{{ cameraName(previewRec.camera_id) }} · {{ formatTime(previewRec.start_time) }}</p>
       <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" class="mb-3" />
       <div v-else-if="previewLoading" class="py-12 text-center text-slate-500">正在加载录像...</div>
-      <div v-else class="compat-aspect-video bg-black flex items-center justify-center"><video v-if="previewRec" :src="previewMediaUrl" controls autoplay preload="metadata" class="max-w-full max-h-full"></video></div>
+      <div v-else class="compat-aspect-video bg-black flex items-center justify-center">
+        <video
+          v-if="previewRec"
+          :ref="(element) => attachPreviewVideo(0, element)"
+          v-show="!isSegmentedRecording(previewRec) || previewPlayback.activeSlot === 0"
+          :src="isSegmentedRecording(previewRec) ? undefined : previewMediaUrl"
+          controls
+          :autoplay="!isSegmentedRecording(previewRec) || previewPlayback.activeSlot === 0"
+          preload="auto"
+          class="max-w-full max-h-full"
+          @loadedmetadata="handlePreviewMetadata(0)"
+          @canplay="handlePreviewCanPlay(0)"
+          @ended="handlePreviewEnded(0)"
+        ></video>
+        <video
+          v-if="previewRec && isSegmentedRecording(previewRec)"
+          :ref="(element) => attachPreviewVideo(1, element)"
+          v-show="previewPlayback.activeSlot === 1"
+          controls
+          :autoplay="previewPlayback.activeSlot === 1"
+          preload="auto"
+          class="max-w-full max-h-full"
+          @loadedmetadata="handlePreviewMetadata(1)"
+          @canplay="handlePreviewCanPlay(1)"
+          @ended="handlePreviewEnded(1)"
+        ></video>
+      </div>
       <template #footer><a v-if="previewRec && !isSegmentedRecording(previewRec)" :href="downloadUrl(previewRec.id)" :download="`recording_${previewRec.id}.${previewRec.format || 'mp4'}`"><el-button type="primary">下载</el-button></a><el-button plain @click="previewOpen = false">关闭</el-button></template>
     </el-dialog>
 
@@ -61,9 +87,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import AppIcon from '../components/AppIcon.vue'
-import { listCameras, listRecordings, stopRecording, deleteRecording, listSchedules, createSchedule, updateSchedule, deleteSchedule, connectEventBus, resolveRecordingPlayback, getSegmentMediaUrl, normalizeRecordingDateRange, normalizeRecordingPlayback, createRecordingHistoryCoordinator, normalizeResourceSafeRecordingOptions } from '../api'
+import { listCameras, listRecordings, stopRecording, deleteRecording, listSchedules, createSchedule, updateSchedule, deleteSchedule, connectEventBus, getRecordingTimeline, resolveRecordingPlayback, getSegmentMediaUrl, normalizeRecordingDateRange, normalizeRecordingPlayback, createRecordingHistoryCoordinator, createRecordingPlaybackCoordinator, normalizeResourceSafeRecordingOptions } from '../api'
 
 const activeTab = ref('recordings')
 const cameras = ref([])
@@ -79,6 +105,7 @@ const previewOpen = ref(false)
 const previewLoading = ref(false)
 const previewError = ref('')
 const previewMediaUrl = ref('')
+const previewPlayback = ref({ activeSlot: 0, point: null, gap: false, error: '', loading: false, loadingNext: false })
 let eventWs = null
 const filter = reactive({ cameraId: null, status: '' })
 const timeSearch = reactive({ startDate: '', endDate: '' })
@@ -91,12 +118,22 @@ const weekdays = [{ name: '周一', short: '一' }, { name: '周二', short: '�
 const defaultScheduleForm = () => ({ id: null, name: '', camera_id: cameras.value[0]?.id || null, start_time: '09:00', end_time: '17:00', days: 127, format: 'mp4', with_audio: false, bitrate: 0, enabled: true })
 const scheduleForm = ref(defaultScheduleForm())
 const selectedDays = computed({ get: () => weekdays.map((_, index) => index).filter((index) => scheduleForm.value.days & (1 << index)), set: (days) => { scheduleForm.value.days = days.reduce((mask, index) => mask | (1 << index), 0) } })
+const previewCoordinator = createRecordingPlaybackCoordinator({
+  resolvePlayback: resolveRecordingPlayback,
+  loadTimeline: getRecordingTimeline,
+  mediaUrl: getSegmentMediaUrl,
+  onStateChange: (state) => {
+    previewPlayback.value = state
+    previewLoading.value = state.loading
+    previewError.value = state.error
+  },
+})
 
 const loadRecordings = async () => { try { const params = { page: page.value, page_size: pageSize }; if (filter.cameraId) params.camera_id = filter.cameraId; if (filter.status) params.status = filter.status; Object.assign(params, normalizeRecordingDateRange(timeSearch)); await historyCoordinator.load(params) } catch (err) { historyCoordinator.reportError(err) } }
 const loadCameras = async () => { cameras.value = await listCameras() }
 const loadSchedules = async () => { const loaded = await listSchedules(); schedules.value = loaded.map((schedule) => ({ ...schedule, ...normalizeResourceSafeRecordingOptions(schedule) })) }
 onMounted(async () => { await loadCameras(); await loadRecordings(); await loadSchedules(); eventWs = connectEventBus((event) => { if (event.type === 'recording_status') loadRecordings() }) })
-onUnmounted(() => { if (eventWs) eventWs.close() })
+onUnmounted(() => { if (eventWs) eventWs.close(); previewCoordinator.close() })
 const goPage = (nextPage) => { if (nextPage < 1 || nextPage > totalPages.value) return; page.value = nextPage; loadRecordings() }
 const applyHistoryFilters = async () => { page.value = 1; await loadRecordings() }
 const clearDateRange = async () => { dateRange.value = []; await applyHistoryFilters() }
@@ -110,8 +147,25 @@ const formatDuration = (seconds) => { if (!seconds) return '-'; const h = Math.f
 const formatSize = (bytes) => { if (!bytes) return '-'; if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`; return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB` }
 const isSegmentedRecording = (recording) => recording.storage_mode === 'segmented'
 const downloadUrl = (id) => { const token = localStorage.getItem('token'); return `/api/v1/recordings/${id}/download?token=${token}` }
-const openRecordingPreview = async (recording) => { previewRec.value = recording; previewOpen.value = true; previewLoading.value = true; previewError.value = ''; previewMediaUrl.value = ''; try { if (isSegmentedRecording(recording)) { const playback = await resolveRecordingPlayback(normalizeRecordingPlayback({ cameraId: recording.camera_id, at: recording.start_time })); previewMediaUrl.value = getSegmentMediaUrl(playback.segment.id) } else { previewMediaUrl.value = downloadUrl(recording.id) } } catch (err) { previewError.value = err.response?.data?.message || err.message || '录像加载失败' } finally { previewLoading.value = false } }
-const closePreview = () => { previewRec.value = null; previewMediaUrl.value = ''; previewError.value = '' }
+const attachPreviewVideo = (slot, video) => previewCoordinator.attach(slot, video)
+const handlePreviewMetadata = (slot) => previewCoordinator.loadedMetadata(slot)
+const handlePreviewCanPlay = (slot) => previewCoordinator.canPlay(slot)
+const handlePreviewEnded = (slot) => previewCoordinator.ended(slot)
+const openRecordingPreview = async (recording) => {
+  previewCoordinator.close()
+  previewRec.value = recording
+  previewOpen.value = true
+  previewError.value = ''
+  previewMediaUrl.value = ''
+  if (isSegmentedRecording(recording)) {
+    await nextTick()
+    const params = normalizeRecordingPlayback({ cameraId: recording.camera_id, at: recording.start_time })
+    await previewCoordinator.open({ cameraId: params.camera_id, at: params.at })
+    return
+  }
+  previewMediaUrl.value = downloadUrl(recording.id)
+}
+const closePreview = () => { previewCoordinator.close(); previewRec.value = null; previewMediaUrl.value = ''; previewError.value = '' }
 const handleStopRecording = async (recording) => { if (!confirm('确定停止该录像吗？')) return; try { await stopRecording(recording.id); loadRecordings() } catch (err) { alert('停止失败: ' + (err.response?.data?.message || err.message)) } }
 const handleDeleteRecording = async (recording) => { if (!confirm(`确定删除录像 #${recording.id} 吗？视频文件将一并删除，不可恢复！`)) return; try { await deleteRecording(recording.id); loadRecordings() } catch (err) { alert('删除失败: ' + (err.response?.data?.message || err.message)) } }
 const openScheduleDialog = (schedule) => { scheduleForm.value = schedule ? { ...defaultScheduleForm(), ...schedule, ...normalizeResourceSafeRecordingOptions(schedule) } : defaultScheduleForm(); showScheduleDialog.value = true }

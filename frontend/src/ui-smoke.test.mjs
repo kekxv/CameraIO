@@ -92,6 +92,7 @@ const renderRecordings = async (overrides = {}) => {
     previewLoading: false,
     previewError: '',
     previewMediaUrl: '/legacy-download',
+    previewPlayback: { activeSlot: 0 },
     showScheduleDialog: false,
     savingSchedule: false,
     scheduleForm: {},
@@ -120,6 +121,10 @@ const renderRecordings = async (overrides = {}) => {
     clearDateRange() {},
     openRecordingPreview() {},
     closePreview() {},
+    attachPreviewVideo() {},
+    handlePreviewMetadata() {},
+    handlePreviewCanPlay() {},
+    handlePreviewEnded() {},
     handleStopRecording() {},
     handleDeleteRecording() {},
     goPage() {},
@@ -262,9 +267,19 @@ test('recordings center uses Element Plus filters, data surfaces, and single-vid
   }
   assert.match(recordings, /normalizeRecordingDateRange\(timeSearch\)/)
   assert.match(recordings, /page_size: pageSize/)
-  assert.equal((recordings.match(/<video/g) || []).length, 1, 'list preview must use one native video element')
+  assert.equal((recordings.match(/<video/g) || []).length, 2, 'sequential list preview must keep two native video slots')
   assert.doesNotMatch(recordings, /按时间播放录像/)
-  assert.doesNotMatch(recordings, /createRecordingPlaybackCoordinator/)
+})
+
+test('recordings list preview restores guarded native segment continuation and Chrome 72-safe filter spacing', () => {
+  const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
+
+  assert.match(recordings, /createRecordingPlaybackCoordinator/)
+  assert.match(recordings, /:ref="\(element\) => attachPreviewVideo\(0, element\)"/)
+  assert.match(recordings, /@ended="handlePreviewEnded\(0\)"/)
+  assert.match(recordings, /previewCoordinator\.close\(\)/)
+  assert.match(recordings, /compat-flex-gap-3/)
+  assert.doesNotMatch(recordings, /flex flex-wrap items-end gap-3/)
 })
 
 test('recording history filters use local date boundaries and playback resolves independently', () => {
@@ -518,7 +533,7 @@ test('recording center renders Element Plus history filters without manual playb
   assert.equal((html.match(/<video/g) || []).length, 0)
 })
 
-test('recording preview renders one native video when opened from the list', async () => {
+test('recording preview renders native sequential video slots when opened from the list', async () => {
   const html = await renderRecordings({
     previewRec: { id: 18, camera_id: 7, start_time: '2026-08-08T10:10:00Z', storage_mode: 'segmented' },
     previewOpen: true,
@@ -526,9 +541,8 @@ test('recording preview renders one native video when opened from the list', asy
   })
   const videos = html.match(/<video[^>]*>/g) || []
 
-  assert.equal(videos.length, 1)
+  assert.equal(videos.length, 2)
   assert.equal(videos.filter((video) => video.includes(' autoplay')).length, 1)
-  assert.match(videos[0], /src="\/segment-media"/)
 })
 
 test('segmented recording preview sends its exact ISO start timestamp to play-at', async () => {
