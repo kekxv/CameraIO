@@ -80,6 +80,7 @@
             共 {{ total }} 条记录
           </div>
         </div>
+        <p v-if="historyError" class="mt-3 text-sm text-red-600">{{ historyError }}</p>
       </div>
 
       <!-- 按时间播放 -->
@@ -95,7 +96,7 @@
           </div>
           <div>
             <label class="block text-xs font-medium text-slate-500 mb-1">播放时间</label>
-            <input v-model="timeSearch.at" type="datetime-local" class="ui-input" />
+            <input v-model="timeSearch.at" type="datetime-local" step="1" class="ui-input" />
           </div>
           <button
             class="ui-button-primary disabled:opacity-50"
@@ -567,6 +568,7 @@ import {
   listSchedules, createSchedule, updateSchedule, deleteSchedule,
   connectEventBus, getRecordingTimeline, resolveRecordingPlayback,
   getSegmentMediaUrl, normalizeRecordingDateRange, normalizeRecordingPlayback,
+  createRecordingHistoryCoordinator,
   createRecordingPlaybackCoordinator,
 	normalizeResourceSafeRecordingOptions,
 } from '../api'
@@ -580,6 +582,7 @@ const previewRec = ref(null)
 const schedules = ref([])
 const showScheduleDialog = ref(false)
 const savingSchedule = ref(false)
+const historyError = ref('')
 const timelineError = ref('')
 const timePlaybackOpen = ref(false)
 const playbackState = ref({
@@ -618,6 +621,16 @@ const pageSize = 20
 const page = ref(1)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
+const historyCoordinator = createRecordingHistoryCoordinator({
+  listRecordings,
+  onStateChange: (state) => {
+    recordings.value = state.recordings
+    total.value = state.total
+    loading.value = state.loading
+    historyError.value = state.error
+  },
+})
+
 const weekdays = [
   { name: '周一', short: '一' },
   { name: '周二', short: '二' },
@@ -643,17 +656,14 @@ const defaultScheduleForm = () => ({
 const scheduleForm = ref(defaultScheduleForm())
 
 const loadRecordings = async () => {
-  loading.value = true
   try {
     const params = { page: page.value, page_size: pageSize }
     if (filter.cameraId) params.camera_id = filter.cameraId
     if (filter.status) params.status = filter.status
     Object.assign(params, normalizeRecordingDateRange(timeSearch))
-    const data = await listRecordings(params)
-    recordings.value = data.recordings
-    total.value = data.total
-  } finally {
-    loading.value = false
+    await historyCoordinator.load(params)
+  } catch (err) {
+    historyCoordinator.fail(err)
   }
 }
 
@@ -759,7 +769,7 @@ const formatSize = (bytes) => {
 const toDatetimeLocal = (value) => {
   const date = value instanceof Date ? value : new Date(value)
   const pad = (number) => String(number).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 const initializeTimeSearch = () => {
@@ -776,10 +786,10 @@ const handlePlaybackMetadata = (slot) => playbackCoordinator.loadedMetadata(slot
 const handlePlaybackCanPlay = (slot) => playbackCoordinator.canPlay(slot)
 const handlePlaybackEnded = (slot) => playbackCoordinator.ended(slot)
 
-const playSelectedTime = async () => {
+const playSelectedTime = async (at = timeSearch.at) => {
   timelineError.value = ''
   try {
-    const params = normalizeRecordingPlayback(timeSearch)
+    const params = normalizeRecordingPlayback({ cameraId: timeSearch.cameraId, at })
     timePlaybackOpen.value = true
     await nextTick()
     await playbackCoordinator.open({
@@ -796,12 +806,12 @@ const openTimePlayback = async (rec) => {
     timeSearch.cameraId = rec.camera_id
     timeSearch.at = toDatetimeLocal(rec.start_time)
   }
-  await playSelectedTime()
+  await playSelectedTime(rec ? rec.start_time : timeSearch.at)
 }
 
 const selectTimelineSegment = async (segment) => {
   timeSearch.at = toDatetimeLocal(segment.start_time)
-  await playSelectedTime()
+  await playSelectedTime(segment.start_time)
 }
 
 const closeTimePlayback = () => {

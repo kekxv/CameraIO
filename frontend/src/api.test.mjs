@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { execFileSync } from 'node:child_process'
 
 globalThis.localStorage = {
   getItem: () => null,
@@ -80,11 +81,68 @@ test('recording date range filters use local day boundaries without limiting his
   })
   assert.deepEqual(apiModule.normalizeRecordingPlayback({
     cameraId: 7,
-    at: '2026-08-09T07:50',
+    at: '2026-08-09T07:50:37.123Z',
   }), {
     camera_id: 7,
-    at: '2026-08-09T07:50:00.000Z',
+    at: '2026-08-09T07:50:37.123Z',
   })
+  assert.throws(() => apiModule.normalizeRecordingDateRange({
+    startDate: '2026-08-09',
+    endDate: '2026-08-02',
+  }), /结束日期必须不早于开始日期/)
+})
+
+test('recording date range uses the operator local midnight outside UTC', () => {
+  const output = execFileSync(process.execPath, [
+    '--input-type=module',
+    '-e',
+    "globalThis.localStorage={getItem:()=>null,removeItem:()=>{}}; const api=await import('./src/api.js'); process.stdout.write(JSON.stringify(api.normalizeRecordingDateRange({startDate:'2026-08-02',endDate:'2026-08-09'})))",
+  ], {
+    cwd: new URL('../', import.meta.url),
+    env: { ...process.env, TZ: 'America/New_York' },
+  }).toString()
+
+  assert.deepEqual(JSON.parse(output), {
+    start_time: '2026-08-02T04:00:00.000Z',
+    end_time: '2026-08-10T04:00:00.000Z',
+  })
+})
+
+test('recording history ignores an older out-of-order response', async () => {
+  let firstResolve
+  let secondResolve
+  const first = new Promise((resolve) => { firstResolve = resolve })
+  const second = new Promise((resolve) => { secondResolve = resolve })
+  const states = []
+  const coordinator = apiModule.createRecordingHistoryCoordinator({
+    listRecordings: ({ page }) => page === 1 ? first : second,
+    onStateChange: (state) => states.push(state),
+  })
+
+  const firstRequest = coordinator.load({ page: 1 })
+  const secondRequest = coordinator.load({ page: 2 })
+  secondResolve({ recordings: [{ id: 2 }], total: 1 })
+  await secondRequest
+  firstResolve({ recordings: [{ id: 1 }], total: 1 })
+  await firstRequest
+
+  assert.deepEqual(coordinator.state, {
+    recordings: [{ id: 2 }],
+    total: 1,
+    loading: false,
+    error: '',
+  })
+  assert.equal(states.at(-1).loading, false)
+})
+
+test('recording history surfaces a latest query error', async () => {
+  const coordinator = apiModule.createRecordingHistoryCoordinator({
+    listRecordings: async () => { throw new Error('历史筛选失败') },
+  })
+
+  await coordinator.load({ page: 1 })
+
+  assert.equal(coordinator.state.error, '历史筛选失败')
 })
 
 test('captureSnapshot requests the native JPEG endpoint as a blob', async () => {

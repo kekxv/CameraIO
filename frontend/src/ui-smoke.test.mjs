@@ -2,12 +2,34 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { compile } from '@vue/compiler-dom'
-import { parse } from '@vue/compiler-sfc'
+import { parse, compileScript } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 
 const css = readFileSync(new URL('./assets/main.css', import.meta.url), 'utf8')
 const recordingBehavior = await import('./api.js')
+
+const loadRecordingsSetup = async () => {
+  const source = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
+  const descriptor = parse(source).descriptor
+  const vueURL = import.meta.resolve('vue')
+  const apiURL = new URL('./api.js', import.meta.url).href
+  const compiled = compileScript(descriptor, { id: 'recordings-test' }).content
+    .replace(/from 'vue'/g, `from '${vueURL}'`)
+    .replace(/import AppIcon from '[^']+'\n/, 'const AppIcon = null\n')
+    .replace(/from '\.\.\/api'/g, `from '${apiURL}'`)
+  const moduleURL = `data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`
+  const component = (await import(moduleURL)).default
+  let setup
+  const app = Vue.createSSRApp({
+    setup(props, context) {
+      setup = component.setup(props, context)
+      return () => null
+    },
+  })
+  await renderToString(app)
+  return setup
+}
 
 const renderRecordings = async (overrides = {}) => {
   const source = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
@@ -52,6 +74,7 @@ const renderRecordings = async (overrides = {}) => {
       endDate: '2026-08-08',
       at: '2026-08-08T10:15',
     },
+    historyError: '',
     timelineError: '',
     timePlaybackOpen: true,
     playbackState: {
@@ -410,6 +433,7 @@ test('recording center renders date history controls and a bounded playback time
 
   assert.equal((html.match(/type="date"/g) || []).length, 2)
   assert.equal((html.match(/type="datetime-local"/g) || []).length, 1)
+  assert.match(html, /type="datetime-local"[^>]*step="1"/)
   assert.match(html, /North Gate/)
   assert.match(html, /至/)
   assert.match(html, /清除日期/)
@@ -428,6 +452,75 @@ test('recording center preloads the hidden player without autoplaying it', async
   assert.equal(videos.length, 2)
   assert.equal(videos.filter((video) => video.includes(' autoplay')).length, 1)
   assert.equal(videos.filter((video) => video.includes('style="display:none;"')).length, 1)
+})
+
+test('recording timeline selection sends the exact segment timestamp to play-at', async () => {
+  globalThis.localStorage = { getItem: () => null, removeItem: () => {} }
+  const api = recordingBehavior.default
+  const originalAdapter = api.defaults.adapter
+  let request
+  api.defaults.adapter = async (config) => {
+    request = config
+    return {
+      data: { code: 0, data: { segment: { id: 8 }, offset_ms: 0, next_segment_id: null, segments: [] } },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+
+  try {
+    const setup = await loadRecordingsSetup()
+    setup.timeSearch.cameraId = 7
+    await setup.selectTimelineSegment({ id: 8, start_time: '2026-08-09T07:50:37.123Z' })
+
+    assert.deepEqual(request.params, {
+      camera_id: 7,
+      at: '2026-08-09T07:50:37.123Z',
+    })
+    assert.equal(setup.timeSearch.at, '2026-08-09T07:50:37')
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+})
+
+test('recording history query and clear reset paging with the expected date filters', async () => {
+  const api = recordingBehavior.default
+  const originalAdapter = api.defaults.adapter
+  const requests = []
+  api.defaults.adapter = async (config) => {
+    requests.push(config)
+    return {
+      data: { code: 0, data: { recordings: [], total: 0 } },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+
+  try {
+    const setup = await loadRecordingsSetup()
+    setup.page.value = 3
+    setup.timeSearch.startDate = '2026-08-02'
+    setup.timeSearch.endDate = '2026-08-09'
+    await setup.applyHistoryFilters()
+    setup.page.value = 3
+    await setup.clearDateRange()
+
+    assert.deepEqual(requests.map((request) => request.params), [
+      {
+        page: 1,
+        page_size: 20,
+        start_time: '2026-08-02T00:00:00.000Z',
+        end_time: '2026-08-10T00:00:00.000Z',
+      },
+      { page: 1, page_size: 20 },
+    ])
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
 })
 
 test('recording center preserves preview and download for legacy single-file recordings', async () => {

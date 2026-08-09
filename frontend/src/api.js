@@ -152,6 +152,9 @@ export const normalizeRecordingDateRange = ({ startDate, endDate } = {}) => {
   const start = parseRecordingDate(startDate, '开始日期')
   const end = parseRecordingDate(endDate, '结束日期')
   if (!start && !end) return {}
+  if (start && end && end.getTime() < start.getTime()) {
+    throw new Error('结束日期必须不早于开始日期')
+  }
 
   const params = {}
   if (start) params.start_time = start.toISOString()
@@ -166,6 +169,52 @@ export const normalizeRecordingPlayback = ({ cameraId, at }) => ({
   camera_id: cameraId,
   at: parseRecordingTime(at, '播放时间').toISOString(),
 })
+
+export const createRecordingHistoryCoordinator = ({ listRecordings: loadRecordings, onStateChange }) => {
+  let generation = 0
+  let state = {
+    recordings: [],
+    total: 0,
+    loading: false,
+    error: '',
+  }
+
+  const setState = (patch) => {
+    state = { ...state, ...patch }
+    if (onStateChange) onStateChange({ ...state })
+  }
+
+  const fail = (err) => {
+    generation += 1
+    setState({
+      recordings: [],
+      total: 0,
+      loading: false,
+      error: err.message || '录像历史查询失败',
+    })
+  }
+
+  return {
+    get state() {
+      return state
+    },
+    async load(params) {
+      const requestGeneration = ++generation
+      setState({ loading: true, error: '' })
+      try {
+        const data = await loadRecordings(params)
+        if (requestGeneration !== generation) return
+        setState({ recordings: data.recordings || [], total: data.total || 0 })
+      } catch (err) {
+        if (requestGeneration !== generation) return
+        setState({ recordings: [], total: 0, error: err.message || '录像历史查询失败' })
+      } finally {
+        if (requestGeneration === generation) setState({ loading: false })
+      }
+    },
+    fail,
+  }
+}
 
 export const buildRecordingCoverage = (segments, from, to) => {
   const fromMS = new Date(from).getTime()
