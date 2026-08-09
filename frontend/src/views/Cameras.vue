@@ -307,7 +307,7 @@
                 <label class="block text-sm font-medium text-slate-700 mb-1">品牌</label>
                 <el-select
                   v-model="form.brand"
-                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  class="w-full"
                 >
                   <el-option label="自定义" value="custom" />
                   <el-option label="海康威视" value="hikvision" />
@@ -318,7 +318,7 @@
                 <label class="block text-sm font-medium text-slate-700 mb-1">设备类型</label>
                 <el-select
                   v-model="form.device_type"
-                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  class="w-full"
                 >
                   <el-option label="IPC 网络摄像机" value="ipc" />
                   <el-option label="NVR 网络录像机" value="nvr" />

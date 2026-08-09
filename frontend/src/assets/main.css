@@ -287,6 +287,7 @@ textarea:focus {
 .recording-filter-field--date .el-date-editor { width: 338px; }
 .recording-filter-actions { flex-shrink: 0; }
 .recording-filter-count { padding-bottom: 10px; color: var(--text-muted); font-size: 13px; line-height: 1; white-space: nowrap; }
+.recording-schedule-audio-field .el-form-item__content { min-height: 32px; align-items: center; }
 
 @media (max-width: 1120px) {
   .recording-filter-bar { grid-template-columns: minmax(0, 1fr) auto; }

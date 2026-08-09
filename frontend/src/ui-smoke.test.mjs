@@ -251,6 +251,14 @@ test('camera dialog layout uses a single aligned protocol choice group and compa
   assert.doesNotMatch(cameras, /<div class="grid grid-cols-3 gap-2">\s*<el-radio-group/)
 })
 
+test('camera dialog uses native Element Plus select chrome for brand and device type', () => {
+  const cameras = readFileSync(new URL('./views/Cameras.vue', import.meta.url), 'utf8')
+
+  assert.match(cameras, /v-model="form\.brand"[\s\S]*?class="w-full"/)
+  assert.match(cameras, /v-model="form\.device_type"[\s\S]*?class="w-full"/)
+  assert.doesNotMatch(cameras, /class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"/)
+})
+
 test('live view uses Element Plus feedback and popover controls while retaining native media operations', () => {
   const live = readFileSync(new URL('./views/Live.vue', import.meta.url), 'utf8')
   for (const primitive of ['el-card', 'el-popover', 'el-checkbox-group', 'el-dialog', 'el-tooltip', 'el-empty', 'el-alert']) {
@@ -420,6 +428,14 @@ test('recording filter toolbar keeps fields, actions, and result count aligned',
   assert.match(recordings, /<el-date-picker[\s\S]*?v-model="dateRange"[\s\S]*?type="daterange"[\s\S]*?range-separator="至"/)
   assert.match(recordings, /@click="applyHistoryFilters"/)
   assert.match(recordings, /@click="clearDateRange"/)
+})
+
+test('recording schedules retain WebM format and an aligned audio field', () => {
+  const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
+
+  assert.match(recordings, /<el-option label="WebM" value="webm"\s*\/>/)
+  assert.match(recordings, /<el-form-item label="音频" class="recording-schedule-audio-field">/)
+  assert.doesNotMatch(recordings, /<el-form-item label="音频" class="flex items-center">/)
 })
 
 test('recordings list preview restores guarded native segment continuation and Chrome 72-safe filter spacing', () => {
