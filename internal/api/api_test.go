@@ -662,6 +662,19 @@ func TestRecordingPlayAtReturnsMediaURLAndOffset(t *testing.T) {
 	if err := db.Create(&next).Error; err != nil {
 		t.Fatalf("create next segment: %v", err)
 	}
+	window := []model.RecordingSegment{current, next}
+	for i := 3; i <= 6; i++ {
+		successor := window[len(window)-1]
+		successor.ID = 0
+		successor.Sequence = i
+		successor.FilePath = filepath.Join(t.TempDir(), fmt.Sprintf("segment-%d.mp4", i))
+		successor.StartTime = window[len(window)-1].EndTime
+		successor.EndTime = successor.StartTime.Add(time.Minute)
+		if err := db.Create(&successor).Error; err != nil {
+			t.Fatalf("create successor segment %d: %v", i, err)
+		}
+		window = append(window, successor)
+	}
 	query := url.Values{"camera_id": {"9"}, "at": {"2026-08-08T10:00:02.500Z"}}
 
 	w := httptest.NewRecorder()
@@ -673,10 +686,11 @@ func TestRecordingPlayAtReturnsMediaURLAndOffset(t *testing.T) {
 	}
 	var resp struct {
 		Data struct {
-			Segment       service.TimelineSegment `json:"segment"`
-			MediaURL      string                  `json:"media_url"`
-			OffsetMS      int64                   `json:"offset_ms"`
-			NextSegmentID *uint                   `json:"next_segment_id"`
+			Segment       service.TimelineSegment   `json:"segment"`
+			Segments      []service.TimelineSegment `json:"segments"`
+			MediaURL      string                    `json:"media_url"`
+			OffsetMS      int64                     `json:"offset_ms"`
+			NextSegmentID *uint                     `json:"next_segment_id"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -688,6 +702,17 @@ func TestRecordingPlayAtReturnsMediaURLAndOffset(t *testing.T) {
 	}
 	if resp.Data.NextSegmentID == nil || *resp.Data.NextSegmentID != next.ID {
 		t.Fatalf("next_segment_id = %v, want %d", resp.Data.NextSegmentID, next.ID)
+	}
+	if len(resp.Data.Segments) != 5 {
+		t.Fatalf("playback segments = %+v, want five entries", resp.Data.Segments)
+	}
+	for i, segment := range resp.Data.Segments {
+		if segment.ID != window[i].ID {
+			t.Fatalf("playback segment %d = %d, want %d", i, segment.ID, window[i].ID)
+		}
+		if i > 0 && segment.StartTime.Before(resp.Data.Segments[i-1].StartTime) {
+			t.Fatalf("playback segments are not chronological: %+v", resp.Data.Segments)
+		}
 	}
 }
 

@@ -425,6 +425,67 @@ func TestResolvePlaybackPointDoesNotAdvertiseNonPositiveDurationAsNext(t *testin
 	}
 }
 
+// TestResolvePlaybackPointReturnsBoundedContiguousWindow catches returning an
+// unbounded sequence or continuing playback after a recording discontinuity.
+func TestResolvePlaybackPointReturnsBoundedContiguousWindow(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	start := queryTime(t, "2026-08-08T10:00:00Z")
+	segments := make([]model.RecordingSegment, 0, 7)
+	for i := 0; i < 6; i++ {
+		segmentStart := start.Add(time.Duration(i) * time.Minute)
+		segments = append(segments, createQuerySegment(t, db, model.RecordingSegment{
+			RecordingID: uint(80 + i),
+			CameraID:    1,
+			Sequence:    i + 1,
+			StartTime:   segmentStart,
+			EndTime:     segmentStart.Add(time.Minute),
+			DurationMS:  60000,
+			Status:      model.RecordingStatusCompleted,
+		}))
+	}
+	gapStart := start.Add(6*time.Minute + 3*time.Second)
+	segments = append(segments, createQuerySegment(t, db, model.RecordingSegment{
+		RecordingID: 86,
+		CameraID:    1,
+		Sequence:    7,
+		StartTime:   gapStart,
+		EndTime:     gapStart.Add(time.Minute),
+		DurationMS:  60000,
+		Status:      model.RecordingStatusCompleted,
+	}))
+
+	svc := NewRecorderService(db, nil)
+	first, err := svc.ResolvePlaybackPoint(1, start.Add(30*time.Second))
+	if err != nil {
+		t.Fatalf("resolve first segment: %v", err)
+	}
+	if first == nil {
+		t.Fatal("first playback point is nil")
+	}
+	if got := first.Segments; len(got) != 5 || got[0].ID != segments[0].ID || got[4].ID != segments[4].ID {
+		t.Fatalf("playback window = %+v, want first five contiguous segments", got)
+	}
+	if first.NextSegmentID == nil || *first.NextSegmentID != segments[1].ID {
+		t.Fatalf("first next segment = %v, want %d", first.NextSegmentID, segments[1].ID)
+	}
+
+	third, err := svc.ResolvePlaybackPoint(1, start.Add(2*time.Minute+30*time.Second))
+	if err != nil {
+		t.Fatalf("resolve third segment: %v", err)
+	}
+	if third == nil {
+		t.Fatal("third playback point is nil")
+	}
+	if got := third.Segments; len(got) != 4 || got[0].ID != segments[2].ID || got[3].ID != segments[5].ID {
+		t.Fatalf("playback window = %+v, want third through sixth contiguous segments", got)
+	}
+	if third.NextSegmentID == nil || *third.NextSegmentID != segments[3].ID {
+		t.Fatalf("third next segment = %v, want %d", third.NextSegmentID, segments[3].ID)
+	}
+}
+
 // TestRecorderListUsesIntervalOverlap catches filtering legacy sessions only
 // by whether their start time lies inside the requested range.
 func TestRecorderListUsesIntervalOverlap(t *testing.T) {
