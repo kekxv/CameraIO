@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from 'acorn'
+import { parse as parseCSS } from 'postcss'
 
 const assetsDir = new URL('../dist/assets/', import.meta.url)
 const assetNames = readdirSync(assetsDir)
@@ -38,6 +39,18 @@ if (!css.includes('--chrome72-flex-gap-fallback')) {
 }
 if (!/@supports not\s*\(aspect-ratio\s*:\s*1\s*\/\s*1\)/.test(css)) {
   throw new Error('compiled CSS is missing the aspect-ratio fallback')
+}
+
+let elementFlexGapCount = 0
+parseCSS(css).walkDecls(/^(gap|row-gap|column-gap)$/, (declaration) => {
+  if (!declaration.parent.selector?.includes('.el-')) return
+  elementFlexGapCount += 1
+  if (!/--fgp-(?:gap|row-gap|column-gap)/.test(declaration.value)) {
+    throw new Error(`${declaration.parent.selector} retains a Chrome 72-incompatible ${declaration.prop} declaration`)
+  }
+})
+if (elementFlexGapCount > 0 && (!css.includes('--fgp-parent-gap-row') || !css.includes('margin-top:var(--fgp-margin-top'))) {
+  throw new Error('compiled Element Plus CSS is missing the Chrome 72 flex-gap fallback')
 }
 
 console.log('Chrome 72 compatibility check passed')

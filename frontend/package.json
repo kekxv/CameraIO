@@ -23,6 +23,7 @@
     "@vitejs/plugin-vue": "^5.1.0",
     "acorn": "^8.18.0",
     "autoprefixer": "^10.4.20",
+    "flex-gap-polyfill": "^5.0.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "vite": "^5.4.0"
