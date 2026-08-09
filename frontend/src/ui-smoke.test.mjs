@@ -427,16 +427,18 @@ test('recording playback exposes a gap state for a missing selected time', async
   assert.equal(coordinator.state.error, '')
 })
 
-test('recording center renders date history controls and sequential playback', async () => {
+test('recording center renders aligned history filters without redundant manual playback controls', async () => {
   const html = await renderRecordings()
 
   assert.equal((html.match(/type="date"/g) || []).length, 2)
-  assert.equal((html.match(/type="datetime-local"/g) || []).length, 1)
-  assert.match(html, /type="datetime-local"[^>]*step="1"/)
+  assert.equal((html.match(/type="datetime-local"/g) || []).length, 0)
   assert.match(html, /North Gate/)
   assert.match(html, /至/)
   assert.match(html, /清除日期/)
   assert.match(html, /查询历史/)
+  assert.doesNotMatch(html, /播放摄像头/)
+  assert.doesNotMatch(html, /播放时间/)
+  assert.doesNotMatch(html, /播放所选时间/)
   assert.doesNotMatch(html, /播放片段/)
   assert.equal((html.match(/<video/g) || []).length, 2)
   assert.match(html, /preload="auto"/)

@@ -33,7 +33,7 @@
       <!-- 筛选栏 -->
       <div class="ui-card p-4 mb-4">
         <div class="compat-flex-gap-3 flex-wrap items-end">
-          <div>
+          <div class="flex flex-col">
             <label class="block text-xs font-medium text-slate-500 mb-1">摄像头</label>
             <select
               v-model="filter.cameraId"
@@ -46,7 +46,7 @@
               </option>
             </select>
           </div>
-          <div>
+          <div class="flex flex-col">
             <label class="block text-xs font-medium text-slate-500 mb-1">状态</label>
             <select
               v-model="filter.status"
@@ -59,54 +59,23 @@
               <option value="failed">失败</option>
             </select>
           </div>
-          <div>
+          <div class="flex flex-col">
             <label class="block text-xs font-medium text-slate-500 mb-1">录像日期</label>
-            <div class="compat-flex-gap-1 items-center">
-              <input v-model="timeSearch.startDate" type="date" class="ui-input" aria-label="开始日期" />
+            <div class="compat-flex-gap-2 items-center whitespace-nowrap">
+              <input v-model="timeSearch.startDate" type="date" class="ui-input h-10 w-40" aria-label="开始日期" />
               <span class="text-sm text-slate-500">至</span>
-              <input v-model="timeSearch.endDate" type="date" class="ui-input" aria-label="结束日期" />
+              <input v-model="timeSearch.endDate" type="date" class="ui-input h-10 w-40" aria-label="结束日期" />
             </div>
           </div>
-          <button @click="clearDateRange" class="ui-button-secondary">清除日期</button>
-          <button @click="applyHistoryFilters" class="ui-button-primary">查询历史</button>
-          <button
-            @click="loadRecordings"
-            class="ui-button-secondary"
-          >
-            刷新
-          </button>
+          <button @click="clearDateRange" class="ui-button-secondary h-10">清除日期</button>
+          <button @click="applyHistoryFilters" class="ui-button-primary h-10">查询历史</button>
+          <button @click="loadRecordings" class="ui-button-secondary h-10">刷新</button>
           <div class="flex-1"></div>
           <div class="text-xs text-slate-500">
             共 {{ total }} 条记录
           </div>
         </div>
         <p v-if="historyError" class="mt-3 text-sm text-red-600">{{ historyError }}</p>
-      </div>
-
-      <!-- 按时间播放 -->
-      <div class="ui-card p-4 mb-4">
-        <div class="flex flex-wrap items-end compat-flex-gap-3">
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">播放摄像头</label>
-            <select v-model="timeSearch.cameraId" class="ui-select">
-              <option v-for="cam in cameras" :key="cam.id" :value="cam.id">
-                {{ cam.name }}
-              </option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">播放时间</label>
-            <input v-model="timeSearch.at" type="datetime-local" step="1" class="ui-input" />
-          </div>
-          <button
-            class="ui-button-primary disabled:opacity-50"
-            :disabled="!timeSearch.cameraId"
-            @click="playSelectedTime"
-          >
-            播放所选时间
-          </button>
-        </div>
-        <p v-if="timelineError" class="mt-3 text-sm text-red-600">{{ timelineError }}</p>
       </div>
 
       <!-- 加载中 -->
