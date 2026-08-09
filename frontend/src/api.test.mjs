@@ -192,21 +192,25 @@ test('camera, live, recording, and schedule actions retain their API endpoints',
     await apiModule.stopStream(7)
     await apiModule.startRecording(7, { format: 'webm', bitrate: 1000 })
     await apiModule.stopRecording(9)
+    await apiModule.listRecordings({ page: 2, page_size: 20, camera_id: 7 })
+    await apiModule.deleteRecording(9)
     await apiModule.createSchedule({ name: 'Daytime' })
     await apiModule.updateSchedule(3, { enabled: true })
     await apiModule.deleteSchedule(3)
 
-    assert.deepEqual(requests.map(({ method, url, data }) => ({ method, url, data })), [
-      { method: 'post', url: '/cameras', data: JSON.stringify({ name: 'North Gate' }) },
-      { method: 'put', url: '/cameras/7', data: JSON.stringify({ name: 'North Gate 2' }) },
-      { method: 'delete', url: '/cameras/7', data: undefined },
-      { method: 'post', url: '/streams/7/start', data: undefined },
-      { method: 'post', url: '/streams/7/stop', data: undefined },
-      { method: 'post', url: '/recordings/start', data: JSON.stringify({ camera_id: 7, format: 'mp4', bitrate: 0 }) },
-      { method: 'post', url: '/recordings/stop', data: JSON.stringify({ recording_id: 9 }) },
-      { method: 'post', url: '/schedules', data: JSON.stringify({ name: 'Daytime' }) },
-      { method: 'put', url: '/schedules/3', data: JSON.stringify({ enabled: true }) },
-      { method: 'delete', url: '/schedules/3', data: undefined },
+    assert.deepEqual(requests.map(({ method, url, data, params }) => ({ method, url, data, params })), [
+      { method: 'post', url: '/cameras', data: JSON.stringify({ name: 'North Gate' }), params: undefined },
+      { method: 'put', url: '/cameras/7', data: JSON.stringify({ name: 'North Gate 2' }), params: undefined },
+      { method: 'delete', url: '/cameras/7', data: undefined, params: undefined },
+      { method: 'post', url: '/streams/7/start', data: undefined, params: undefined },
+      { method: 'post', url: '/streams/7/stop', data: undefined, params: undefined },
+      { method: 'post', url: '/recordings/start', data: JSON.stringify({ camera_id: 7, format: 'mp4', bitrate: 0 }), params: undefined },
+      { method: 'post', url: '/recordings/stop', data: JSON.stringify({ recording_id: 9 }), params: undefined },
+      { method: 'get', url: '/recordings', data: undefined, params: { page: 2, page_size: 20, camera_id: 7 } },
+      { method: 'delete', url: '/recordings/9', data: undefined, params: undefined },
+      { method: 'post', url: '/schedules', data: JSON.stringify({ name: 'Daytime' }), params: undefined },
+      { method: 'put', url: '/schedules/3', data: JSON.stringify({ enabled: true }), params: undefined },
+      { method: 'delete', url: '/schedules/3', data: undefined, params: undefined },
     ])
   } finally {
     api.defaults.adapter = originalAdapter

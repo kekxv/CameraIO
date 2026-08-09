@@ -295,6 +295,40 @@ test('every page keeps its Element Plus plain surface and core action without re
   }
 })
 
+test('recordings playback can only originate from a list row, not a timestamp-and-camera panel', () => {
+  const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
+
+  assert.match(recordings, /<el-button[\s\S]*?@click="openRecordingPreview\(row\)"/)
+  assert.match(recordings, /const openRecordingPreview = async \(recording\) => \{[\s\S]*?previewRec\.value = recording[\s\S]*?previewOpen\.value = true/)
+  assert.match(recordings, /normalizeRecordingPlayback\(\{ cameraId: recording\.camera_id, at: recording\.start_time \}\)/)
+  assert.match(recordings, /await previewCoordinator\.open\(\{ cameraId: params\.camera_id, at: params\.at \}\)/)
+  assert.equal((recordings.match(/<video/g) || []).length, 2, 'the list preview must retain its sequential native video slots')
+
+  for (const legacyManualPlaybackStructure of [
+    /v-model="timeSearch\.cameraId"/,
+    /v-model="timeSearch\.at"/,
+    /timePlaybackOpen/,
+    /playSelectedTime/,
+    /openTimePlayback/,
+    /attachPlaybackVideo/,
+    /handlePlayback(?:Metadata|CanPlay|Ended)/,
+    /type="datetime-local"/,
+  ]) {
+    assert.doesNotMatch(recordings, legacyManualPlaybackStructure, `recordings must not restore manual playback structure: ${legacyManualPlaybackStructure}`)
+  }
+})
+
+test('recordings history and row actions retain their concrete list, stop, and delete paths', () => {
+  const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
+
+  assert.match(recordings, /createRecordingHistoryCoordinator\(\{ listRecordings,/)
+  assert.match(recordings, /const loadRecordings = async \(\) => \{[\s\S]*?page_size: pageSize[\s\S]*?normalizeRecordingDateRange\(timeSearch\)[\s\S]*?await historyCoordinator\.load\(params\)/)
+  assert.match(recordings, /@click="handleStopRecording\(row\)"/)
+  assert.match(recordings, /@click="handleDeleteRecording\(row\)"/)
+  assert.match(recordings, /const handleStopRecording = async \(recording\) => \{[\s\S]*?await stopRecording\(recording\.id\)[\s\S]*?loadRecordings\(\)/)
+  assert.match(recordings, /const handleDeleteRecording = async \(recording\) => \{[\s\S]*?await deleteRecording\(recording\.id\)[\s\S]*?loadRecordings\(\)/)
+})
+
 test('recordings center uses Element Plus filters, data surfaces, and single-video list preview', () => {
   const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
 
