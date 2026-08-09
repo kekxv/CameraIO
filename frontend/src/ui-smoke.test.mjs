@@ -88,16 +88,22 @@ const renderRecordings = async (overrides = {}) => {
     page: 1,
     schedules: [],
     previewRec: null,
+    previewOpen: false,
+    previewLoading: false,
+    previewError: '',
+    previewMediaUrl: '/legacy-download',
     showScheduleDialog: false,
     savingSchedule: false,
     scheduleForm: {},
     weekdays: [],
+    selectedDays: [],
     timeSearch: {
       cameraId: 7,
       startDate: '2026-08-08',
       endDate: '2026-08-08',
       at: '2026-08-08T10:15',
     },
+    dateRange: ['2026-08-08', '2026-08-08'],
     historyError: '',
     timelineError: '',
     timePlaybackOpen: true,
@@ -112,23 +118,14 @@ const renderRecordings = async (overrides = {}) => {
     loadRecordings() {},
     applyHistoryFilters() {},
     clearDateRange() {},
-    playSelectedTime() {},
-    openTimePlayback() {},
     openRecordingPreview() {},
-    closeTimePlayback() {},
-    closeLegacyPreview() {},
-    attachPlaybackVideo() {},
-    handlePlaybackMetadata() {},
-    handlePlaybackCanPlay() {},
-    handlePlaybackEnded() {},
-    previewRecording() {},
+    closePreview() {},
     handleStopRecording() {},
     handleDeleteRecording() {},
     goPage() {},
     openScheduleDialog() {},
     toggleSchedule() {},
     handleDeleteSchedule() {},
-    toggleDay() {},
     saveSchedule() {},
     cameraName: () => 'North Gate',
     formatTime: (value) => value,
@@ -137,6 +134,7 @@ const renderRecordings = async (overrides = {}) => {
     triggerClass: () => '',
     triggerLabel: () => '定时',
     statusLabel: () => '已完成',
+    statusType: () => 'success',
     downloadUrl: () => '/legacy-download',
     isSegmentedRecording: (recording) => recording.storage_mode === 'segmented',
     coverageTitle: (part) => part.type === 'gap' ? '录像空档' : '可播放录像',
@@ -144,6 +142,7 @@ const renderRecordings = async (overrides = {}) => {
   }
   const app = Vue.createSSRApp({ setup: () => context, render })
   app.component('AppIcon', { render: () => null })
+  app.component('el-table-column', { render: () => null })
   app.config.warnHandler = () => {}
   return renderToString(app)
 }
@@ -250,8 +249,22 @@ test('recordings view preserves recording and schedule actions in a responsive s
   const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
   assert.match(recordings, /stopRecording/)
   assert.match(recordings, /saveSchedule/)
-  assert.match(recordings, /ui-card/)
-  assert.match(recordings, /overflow-x-auto/)
+  assert.match(recordings, /<el-card/)
+  assert.match(recordings, /<el-table/)
+})
+
+test('recordings center uses Element Plus filters, data surfaces, and single-video list preview', () => {
+  const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
+
+  assert.match(recordings, /<el-date-picker[\s\S]*?v-model="dateRange"[\s\S]*?type="daterange"[\s\S]*?range-separator="至"/)
+  for (const primitive of ['el-tabs', 'el-select', 'el-table', 'el-pagination', 'el-dialog', 'el-form', 'el-tag', 'el-empty', 'el-alert']) {
+    assert.match(recordings, new RegExp(`<${primitive}`), `recordings center must use ${primitive}`)
+  }
+  assert.match(recordings, /normalizeRecordingDateRange\(timeSearch\)/)
+  assert.match(recordings, /page_size: pageSize/)
+  assert.equal((recordings.match(/<video/g) || []).length, 1, 'list preview must use one native video element')
+  assert.doesNotMatch(recordings, /按时间播放录像/)
+  assert.doesNotMatch(recordings, /createRecordingPlaybackCoordinator/)
 })
 
 test('recording history filters use local date boundaries and playback resolves independently', () => {
@@ -490,11 +503,10 @@ test('recording playback exposes a gap state for a missing selected time', async
   assert.equal(coordinator.state.error, '')
 })
 
-test('recording center renders aligned history filters without redundant manual playback controls', async () => {
+test('recording center renders Element Plus history filters without manual playback controls', async () => {
   const html = await renderRecordings()
 
-  assert.equal((html.match(/type="date"/g) || []).length, 2)
-  assert.equal((html.match(/type="datetime-local"/g) || []).length, 0)
+  assert.match(html, /el-date-picker/)
   assert.match(html, /North Gate/)
   assert.match(html, /至/)
   assert.match(html, /清除日期/)
@@ -503,19 +515,20 @@ test('recording center renders aligned history filters without redundant manual 
   assert.doesNotMatch(html, /播放时间/)
   assert.doesNotMatch(html, /播放所选时间/)
   assert.doesNotMatch(html, /播放片段/)
-  assert.equal((html.match(/<video/g) || []).length, 2)
-  assert.match(html, /preload="auto"/)
-  assert.match(html, /导出尚未实现/)
-  assert.doesNotMatch(html, /href="\/legacy-download"/)
+  assert.equal((html.match(/<video/g) || []).length, 0)
 })
 
-test('recording center preloads the hidden player without autoplaying it', async () => {
-  const html = await renderRecordings()
+test('recording preview renders one native video when opened from the list', async () => {
+  const html = await renderRecordings({
+    previewRec: { id: 18, camera_id: 7, start_time: '2026-08-08T10:10:00Z', storage_mode: 'segmented' },
+    previewOpen: true,
+    previewMediaUrl: '/segment-media',
+  })
   const videos = html.match(/<video[^>]*>/g) || []
 
-  assert.equal(videos.length, 2)
+  assert.equal(videos.length, 1)
   assert.equal(videos.filter((video) => video.includes(' autoplay')).length, 1)
-  assert.equal(videos.filter((video) => video.includes('style="display:none;"')).length, 1)
+  assert.match(videos[0], /src="\/segment-media"/)
 })
 
 test('segmented recording preview sends its exact ISO start timestamp to play-at', async () => {
@@ -651,11 +664,10 @@ test('recording center preserves preview and download for legacy single-file rec
   const html = await renderRecordings({
     recordings: [legacy],
     previewRec: legacy,
-    timePlaybackOpen: false,
+    previewOpen: true,
+    previewMediaUrl: '/legacy-download',
   })
 
   assert.match(html, /录像预览 #19/)
   assert.match(html, /<video[^>]*src="\/legacy-download"/)
-  assert.equal((html.match(/href="\/legacy-download"/g) || []).length, 2)
-  assert.doesNotMatch(html, /导出尚未实现/)
 })
