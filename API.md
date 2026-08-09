@@ -386,7 +386,8 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
 
 ### GET /recordings
 
-查询录像列表。
+查询录像历史。`start_time` 和 `end_time` 构成可选的日期范围；未提供时查询全部
+历史记录。筛选结果仍使用 `page` 和 `page_size` 分页，不会因日期筛选而限制为单页。
 
 **查询参数**
 
@@ -468,7 +469,9 @@ curl -G http://localhost:8080/api/v1/recordings/timeline \
 ### GET /recordings/play-at
 
 解析指定摄像头在某一 UTC 时刻应播放的片段和片内偏移。`at` 必须是
-RFC3339 UTC 时间；该时刻没有录像覆盖时返回 404。
+RFC3339 UTC 时间；该时刻没有录像覆盖时返回 404。响应的 `segments` 是按时间
+排序的有界播放窗口：从命中的 `segment` 开始，包含该片段及至多四个连续的后续
+片段（最多五个）；遇到不连续边界时窗口结束。
 
 ```bash
 curl -G http://localhost:8080/api/v1/recordings/play-at \
@@ -493,6 +496,17 @@ curl -G http://localhost:8080/api/v1/recordings/play-at \
       "file_size": 4194304,
       "status": "completed"
     },
+    "segments": [
+      {
+        "id": 301,
+        "recording_id": 105,
+        "start_time": "2026-08-08T10:00:00Z",
+        "end_time": "2026-08-08T10:01:00Z",
+        "duration_ms": 60000,
+        "file_size": 4194304,
+        "status": "completed"
+      }
+    ],
     "media_url": "/api/v1/recording-segments/301/media",
     "offset_ms": 2500,
     "next_segment_id": 302
@@ -500,7 +514,8 @@ curl -G http://localhost:8080/api/v1/recordings/play-at \
 }
 ```
 
-`next_segment_id` 仅在紧邻的下一片段可连续播放时提供，否则为 `null`。
+`next_segment_id` 仅在紧邻的下一片段可连续播放时提供，否则为 `null`。客户端应以
+`segments` 驱动回放队列；该窗口刻意限制为五个视频，而不是完整录像历史。
 
 ### GET /recording-segments/:id/media
 

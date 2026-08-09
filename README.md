@@ -268,6 +268,10 @@ Authorization: Bearer <token>
 | GET | `/api/v1/recordings/:id` | 录像详情 |
 | GET | `/api/v1/recordings/:id/download` | 下载 MP4（支持断点续传） |
 
+录像列表可按可选日期范围筛选全部历史记录，并保留现有分页；未填写日期时会查询
+所有历史。分段录像从所选时间开始播放时，播放弹窗会动态使用命中片段及至多四个
+连续后续片段（最多五个视频），这是有意的播放窗口限制，不等同于历史查询范围。
+
 ### WebSocket
 
 ```
