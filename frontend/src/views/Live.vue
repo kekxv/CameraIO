@@ -227,7 +227,7 @@
               </el-radio-button>
             </el-radio-group>
             <p class="text-[10px] text-slate-400 mt-1">
-              {{ recordFormat === 'mp4' ? '分段 MP4 流拷贝，推荐' : 'TS 流拷贝' }}
+              {{ recordFormat === 'mp4' ? '单文件 MP4 流拷贝，推荐' : '单文件 TS 流拷贝' }}
             </p>
           </div>
 
@@ -241,6 +241,16 @@
 
           <!-- 音频开关 -->
           <el-checkbox v-model="recordWithAudio" class="mb-4">包含音频</el-checkbox>
+
+          <div class="mb-4">
+            <label class="block text-xs font-medium text-slate-600 mb-1.5">录像备注</label>
+            <el-input
+              v-model="recordRemark"
+              maxlength="255"
+              clearable
+              placeholder="可选，例如：柜员交接"
+            />
+          </div>
 
           <!-- 操作按钮 -->
           <div class="compat-flex-gap-2 justify-end">
@@ -272,7 +282,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { listCameras, startStream, stopStream, startRecording, stopRecording, captureSnapshot, getAPIErrorMessage, connectEventBus } from '../api'
+import { listCameras, startStream, stopStream, startRecording, stopRecording, heartbeatRecording, captureSnapshot, getAPIErrorMessage, connectEventBus } from '../api'
 import AppIcon from '../components/AppIcon.vue'
 
 const cameras = ref([])
@@ -293,9 +303,11 @@ const recordTarget = ref(null)
 const recordFormat = ref('mp4')
 const recordWithAudio = ref(false)
 const recordBitrate = ref(0) // kbps, 0=流拷贝原画质
+const recordRemark = ref('')
 const nowStr = ref('')
 let clockTimer = null
 let eventWs = null
+const manualRecordingHeartbeatTimers = {}
 
 // 每秒更新当前时间
 const updateClock = () => {
@@ -419,6 +431,23 @@ const takeSnapshot = async (cam) => {
   }
 }
 
+const clearManualRecordingHeartbeat = (cameraId) => {
+  const timer = manualRecordingHeartbeatTimers[cameraId]
+  if (timer) clearInterval(timer)
+  delete manualRecordingHeartbeatTimers[cameraId]
+}
+
+const startManualRecordingHeartbeat = (cameraId, recordingId) => {
+  clearManualRecordingHeartbeat(cameraId)
+  manualRecordingHeartbeatTimers[cameraId] = setInterval(async () => {
+    try {
+      await heartbeatRecording(recordingId)
+    } catch (err) {
+      console.warn('recording heartbeat failed:', err)
+    }
+  }, 30000)
+}
+
 const toggleRecord = async (cam) => {
   const state = recording.value[cam.id]
   if (state === 'active') {
@@ -426,6 +455,7 @@ const toggleRecord = async (cam) => {
     try {
       const recId = recordingIdMap.value[cam.id]
       if (recId) await stopRecording(recId)
+      clearManualRecordingHeartbeat(cam.id)
       recording.value[cam.id] = false
     } catch (err) {
       alert('停止录像失败: ' + (err.response?.data?.message || err.message))
@@ -437,6 +467,7 @@ const toggleRecord = async (cam) => {
     recordFormat.value = 'mp4'
     recordWithAudio.value = false
     recordBitrate.value = 0
+    recordRemark.value = ''
     showRecordDialog.value = true
   }
 }
@@ -451,8 +482,13 @@ const confirmStartRecording = async () => {
       format: recordFormat.value,
       with_audio: recordWithAudio.value,
       bitrate: recordBitrate.value,
+      trigger_type: 'manual',
+      remark: recordRemark.value,
     })
-    recordingIdMap.value[cam.id] = rec.id
+    const recordingId = rec.recording_id || rec.id
+    if (!recordingId) throw new Error('开始录像未返回录像 ID')
+    recordingIdMap.value[cam.id] = recordingId
+    startManualRecordingHeartbeat(cam.id, recordingId)
     recording.value[cam.id] = 'active'
   } catch (err) {
     alert('开始录像失败: ' + (err.response?.data?.message || err.message))
@@ -491,6 +527,7 @@ onMounted(async () => {
       } else {
         recording.value[camera_id] = false
         delete recordingIdMap.value[camera_id]
+        clearManualRecordingHeartbeat(camera_id)
       }
     }
     if (event.type === 'camera_status') {
@@ -514,6 +551,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   if (clockTimer) clearInterval(clockTimer)
   if (eventWs) eventWs.close()
+  Object.keys(manualRecordingHeartbeatTimers).forEach((cameraId) => clearManualRecordingHeartbeat(cameraId))
   clearSnapshot()
   // 离开页面时自动停止所有预览
   stopAllStreams()

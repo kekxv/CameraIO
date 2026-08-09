@@ -11,10 +11,17 @@ import (
 	"strings"
 	"time"
 
+	"CameraIO/internal/model"
 	"CameraIO/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
+
+type startRecordingResponse struct {
+	*model.Recording
+	RecordingID uint `json:"recording_id"`
+}
 
 func (h *Handler) StartRecording(c *gin.Context) {
 	var req service.StartRecordingInput
@@ -37,7 +44,57 @@ func (h *Handler) StartRecording(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	created(c, recording)
+	created(c, startRecordingResponse{Recording: recording, RecordingID: recording.ID})
+}
+
+// RecordingHeartbeat renews the lease of an active manual recording session.
+func (h *Handler) RecordingHeartbeat(c *gin.Context) {
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		return
+	}
+	recording, err := h.recorderSvc.HeartbeatRecording(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			fail(c, http.StatusNotFound, "recording not found")
+			return
+		}
+		var conflictErr *service.RecordingSessionConflictError
+		if errors.As(err, &conflictErr) {
+			fail(c, http.StatusConflict, conflictErr.Error())
+			return
+		}
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	heartbeatAt := recording.HeartbeatAt.UTC()
+	ok(c, gin.H{
+		"recording_id":     recording.ID,
+		"heartbeat_at":     heartbeatAt,
+		"lease_expires_at": heartbeatAt.Add(60 * time.Second),
+	})
+}
+
+// GetRecordingDownloadURL returns the authenticated download endpoint for a
+// finalized single-file recording.
+func (h *Handler) GetRecordingDownloadURL(c *gin.Context) {
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		return
+	}
+	recording, err := h.recorderSvc.GetRecording(id)
+	if err != nil {
+		fail(c, http.StatusNotFound, "recording not found")
+		return
+	}
+	if recording.Status != "completed" || recording.StorageMode == "segmented" {
+		fail(c, http.StatusConflict, "recording download is not ready")
+		return
+	}
+	ok(c, gin.H{
+		"recording_id": recording.ID,
+		"download_url": fmt.Sprintf("/api/v1/recordings/%d/download", recording.ID),
+	})
 }
 
 func (h *Handler) StopRecording(c *gin.Context) {

@@ -106,6 +106,12 @@ export const startRecording = (cameraId, options = {}) =>
 export const stopRecording = (recordingId) =>
   api.post('/recordings/stop', { recording_id: recordingId })
 
+export const heartbeatRecording = (recordingId) =>
+  api.post(`/recordings/${recordingId}/heartbeat`).then((r) => r.data.data)
+
+export const getRecordingDownloadLocation = (recordingId) =>
+  api.get(`/recordings/${recordingId}/download-url`).then((r) => r.data.data)
+
 export const listRecordings = (params) =>
   api.get('/recordings', { params }).then((r) => r.data.data)
 

@@ -19,6 +19,8 @@ type Recording struct {
 	Format      string     `json:"format" gorm:"type:varchar(8);default:mp4"`
 	WithAudio   bool       `json:"with_audio" gorm:"default:false"`
 	StorageMode string     `json:"storage_mode" gorm:"type:varchar(16);default:legacy"`
+	Remark      string     `json:"remark" gorm:"type:varchar(255);default:''"`
+	HeartbeatAt *time.Time `json:"heartbeat_at" gorm:"index"`
 
 	Camera *Camera `json:"camera,omitempty" gorm:"foreignKey:CameraID"`
 }
@@ -56,6 +58,7 @@ func normalizeTimePointerUTC(value *time.Time) *time.Time {
 func (r *Recording) normalizeTimesUTC() {
 	r.StartTime = normalizeTimeUTC(r.StartTime)
 	r.EndTime = normalizeTimePointerUTC(r.EndTime)
+	r.HeartbeatAt = normalizeTimePointerUTC(r.HeartbeatAt)
 }
 
 // BeforeSave ensures recording timestamps are stored in UTC.

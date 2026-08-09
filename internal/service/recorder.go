@@ -42,6 +42,7 @@ type RecorderService struct {
 	diskStat          func(string) (diskUsage, error)
 	retentionNow      func() time.Time
 	retentionInterval time.Duration
+	ffmpegCommand     func(context.Context, string, ...string) *exec.Cmd
 }
 
 type recordTask struct {
@@ -66,12 +67,13 @@ type recordTask struct {
 func NewRecorderService(db *gorm.DB, cfg *pkg.Config) *RecorderService {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RecorderService{
-		db:       db,
-		cfg:      cfg,
-		tasks:    make(map[uint]*recordTask),
-		ctx:      ctx,
-		cancel:   cancel,
-		diskStat: statDiskUsage,
+		db:            db,
+		cfg:           cfg,
+		tasks:         make(map[uint]*recordTask),
+		ctx:           ctx,
+		cancel:        cancel,
+		diskStat:      statDiskUsage,
+		ffmpegCommand: exec.CommandContext,
 	}
 }
 
@@ -83,6 +85,12 @@ func (s *RecorderService) SetStreamService(st *StreamService) {
 // SetEventBus 注入事件总线，用于推送录像状态变更。
 func (s *RecorderService) SetEventBus(events *EventBus) {
 	s.events = events
+}
+
+// SetFFmpegCommand overrides process creation. It is primarily useful for
+// embedding and integration tests that need a controlled recorder process.
+func (s *RecorderService) SetFFmpegCommand(command func(context.Context, string, ...string) *exec.Cmd) {
+	s.ffmpegCommand = command
 }
 
 func (s *RecorderService) publishRecordingStatus(recordingID, cameraID uint, status string) {
@@ -154,6 +162,30 @@ func (s *RecorderService) sweepDeadProcesses() {
 		t.markDone()
 		s.finalizeRecording(t.recording.ID, t)
 		log.Printf("[recorder] sweep: recording %d ffmpeg not alive, finalized", t.recording.ID)
+	}
+	s.sweepExpiredManualHeartbeats(time.Now().UTC())
+}
+
+const manualRecordingHeartbeatTimeout = 60 * time.Second
+
+// sweepExpiredManualHeartbeats stops active single-file manual sessions that
+// have not renewed their lease for two 30-second heartbeat intervals.
+func (s *RecorderService) sweepExpiredManualHeartbeats(now time.Time) {
+	cutoff := now.UTC().Add(-manualRecordingHeartbeatTimeout)
+	var recordingIDs []uint
+	if err := s.db.Model(&model.Recording{}).
+		Where("status = ? AND trigger_type = ? AND heartbeat_at IS NOT NULL AND heartbeat_at < ? AND (storage_mode IS NULL OR storage_mode <> ?)",
+			model.RecordingStatusRecording, model.TriggerManual, cutoff, model.StorageModeSegmented).
+		Pluck("id", &recordingIDs).Error; err != nil {
+		log.Printf("[recorder] sweep manual heartbeats: %v", err)
+		return
+	}
+	for _, recordingID := range recordingIDs {
+		if err := s.StopRecording(recordingID); err != nil {
+			log.Printf("[recorder] heartbeat expired for recording %d: %v", recordingID, err)
+			continue
+		}
+		log.Printf("[recorder] heartbeat expired for recording %d, stopped", recordingID)
 	}
 }
 
@@ -239,6 +271,7 @@ type StartRecordingInput struct {
 	TriggerType string `json:"trigger_type"` // "api" / "manual" / "schedule"（默认 "api"）
 	MaxDuration int    `json:"max_duration"` // 最大录制时长（秒），0=不限；到期自动停止（录像器内部兜底）
 	Bitrate     int    `json:"bitrate"`      // 视频码率（kbps），0=流拷贝（相机原码率，体积大）；>0=转码限码率（体积小，需 CPU）
+	Remark      string `json:"remark"`       // 手动录像备注
 }
 
 type StopRecordingInput struct {
@@ -259,6 +292,14 @@ type RecorderUnavailableError struct {
 }
 
 func (e *RecorderUnavailableError) Error() string { return e.Message }
+
+// RecordingSessionConflictError reports an operation that does not apply to
+// the recording's current session state.
+type RecordingSessionConflictError struct {
+	Message string
+}
+
+func (e *RecordingSessionConflictError) Error() string { return e.Message }
 
 // ---------- 录像控制 ----------
 
@@ -324,8 +365,14 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 		Status:      model.RecordingStatusRecording,
 		Format:      format,
 		WithAudio:   in.WithAudio,
+		StorageMode: model.StorageModeLegacy,
+		Remark:      in.Remark,
 	}
-	segmented := format == model.FormatMP4 && cam.AccessProtocol != model.ProtocolGB28181
+	if triggerType == model.TriggerManual {
+		heartbeatAt := now
+		recording.HeartbeatAt = &heartbeatAt
+	}
+	segmented := format == model.FormatMP4 && cam.AccessProtocol != model.ProtocolGB28181 && triggerType != model.TriggerManual
 	if segmented {
 		recording.FilePath = dir
 		recording.StorageMode = model.StorageModeSegmented
@@ -379,6 +426,25 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	}
 
 	return recording, nil
+}
+
+// HeartbeatRecording renews the lease of an active, single-file manual
+// recording session. Other recording modes never require client heartbeats.
+func (s *RecorderService) HeartbeatRecording(recordingID uint) (*model.Recording, error) {
+	var recording model.Recording
+	if err := s.db.First(&recording, recordingID).Error; err != nil {
+		return nil, err
+	}
+	if recording.Status != model.RecordingStatusRecording || recording.TriggerType != model.TriggerManual || recording.StorageMode == model.StorageModeSegmented {
+		return nil, &RecordingSessionConflictError{Message: "recording is not an active manual session"}
+	}
+
+	now := time.Now().UTC()
+	if err := s.db.Model(&recording).Update("heartbeat_at", now).Error; err != nil {
+		return nil, fmt.Errorf("update recording heartbeat: %w", err)
+	}
+	recording.HeartbeatAt = &now
+	return &recording, nil
 }
 
 func (s *RecorderService) startSegmentedRecording(recording *model.Recording, cam model.Camera) (*recordTask, error) {
@@ -456,7 +522,11 @@ func removeEmptyRecordingSessionDir(path string) error {
 // startFFmpegRecording 启动 FFmpeg 直接拉流录制（RTSP/本地）。
 func (s *RecorderService) startFFmpegRecording(recording *model.Recording, args []string) (*recordTask, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, pkg.FFmpegBinPath(), args...)
+	command := s.ffmpegCommand
+	if command == nil {
+		command = exec.CommandContext
+	}
+	cmd := command(ctx, pkg.FFmpegBinPath(), args...)
 
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf

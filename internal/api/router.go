@@ -53,11 +53,13 @@ func (h *Handler) SetupRouter() *gin.Engine {
 		// Recordings
 		protected.POST("/recordings/start", h.StartRecording)
 		protected.POST("/recordings/stop", h.StopRecording)
+		protected.POST("/recordings/:id/heartbeat", h.RecordingHeartbeat)
 		protected.GET("/recordings", h.ListRecordings)
 		protected.GET("/recordings/timeline", h.RecordingTimeline)
 		protected.GET("/recordings/play-at", h.RecordingPlayAt)
 		protected.GET("/recordings/:id", h.GetRecording)
 		protected.DELETE("/recordings/:id", h.DeleteRecording)
+		protected.GET("/recordings/:id/download-url", h.GetRecordingDownloadURL)
 		protected.GET("/recordings/:id/download", h.DownloadRecording)
 		protected.GET("/recording-segments/:id/media", h.RecordingSegmentMedia)
 

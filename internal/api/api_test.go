@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,7 +62,9 @@ func setupTestHandlerWithDB(t *testing.T) (*Handler, *gorm.DB) {
 	onvifSvc := service.NewONVIFService()
 	cameraSvc := service.NewCameraService(db, onvifSvc)
 	streamSvc := service.NewStreamService(db)
-	recorderSvc := service.NewRecorderService(db, pkg.DefaultConfig())
+	recorderCfg := pkg.DefaultConfig()
+	recorderCfg.RecordingsDir = t.TempDir()
+	recorderSvc := service.NewRecorderService(db, recorderCfg)
 	eventBus := service.NewEventBus()
 	localCamSvc := service.NewLocalCameraService()
 	discoverySvc := service.NewDiscoveryService(onvifSvc)
@@ -896,6 +900,120 @@ func TestStartRecordingReturnsServiceUnavailableAfterRecorderShutdown(t *testing
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("start after shutdown status = %d, want 503: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestManualRecordingStartReturnsIDAndRemark(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	camera := &model.Camera{Name: "front", RTSPUrl: "rtsp://camera/live", AccessProtocol: model.ProtocolRTSP}
+	if err := db.Create(camera).Error; err != nil {
+		t.Fatalf("create camera: %v", err)
+	}
+	h.recorderSvc.SetFFmpegCommand(func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestAPIRecorderProcessHelper", "--")
+		cmd.Env = append(os.Environ(), "CAMERAIO_API_RECORDER_HELPER=1")
+		return cmd
+	})
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/recordings/start", bytes.NewBufferString(fmt.Sprintf(`{"camera_id":%d,"format":"mp4","trigger_type":"manual","remark":"柜员交接"}`, camera.ID)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("manual start status = %d, want 201: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			ID          uint   `json:"id"`
+			RecordingID uint   `json:"recording_id"`
+			Remark      string `json:"remark"`
+			StorageMode string `json:"storage_mode"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+	if resp.Data.RecordingID == 0 || resp.Data.RecordingID != resp.Data.ID {
+		t.Fatalf("recording IDs = response:%d object:%d, want same non-zero ID", resp.Data.RecordingID, resp.Data.ID)
+	}
+	if resp.Data.Remark != "柜员交接" || resp.Data.StorageMode != model.StorageModeLegacy {
+		t.Fatalf("manual start metadata = %+v", resp.Data)
+	}
+	defer h.recorderSvc.StopRecording(resp.Data.RecordingID)
+}
+
+func TestAPIRecorderProcessHelper(t *testing.T) {
+	if os.Getenv("CAMERAIO_API_RECORDER_HELPER") != "1" {
+		return
+	}
+	for {
+		time.Sleep(time.Second)
+	}
+}
+
+func TestManualRecordingHeartbeatAndDownloadLocation(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	oldHeartbeat := time.Now().UTC().Add(-30 * time.Second)
+	active := &model.Recording{
+		CameraID: 1, FilePath: filepath.Join(t.TempDir(), "manual.mp4"), StartTime: oldHeartbeat.Add(-time.Minute),
+		TriggerType: model.TriggerManual, Status: model.RecordingStatusRecording, Format: model.FormatMP4,
+		StorageMode: model.StorageModeLegacy, HeartbeatAt: &oldHeartbeat,
+	}
+	completed := &model.Recording{
+		CameraID: 1, FilePath: filepath.Join(t.TempDir(), "completed.mp4"), StartTime: oldHeartbeat.Add(-time.Minute),
+		TriggerType: model.TriggerManual, Status: model.RecordingStatusCompleted, Format: model.FormatMP4,
+		StorageMode: model.StorageModeLegacy,
+	}
+	for _, recording := range []*model.Recording{active, completed} {
+		if err := db.Create(recording).Error; err != nil {
+			t.Fatalf("create recording: %v", err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/recordings/%d/heartbeat", active.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("heartbeat status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var heartbeatResp struct {
+		Data struct {
+			RecordingID    uint      `json:"recording_id"`
+			HeartbeatAt    time.Time `json:"heartbeat_at"`
+			LeaseExpiresAt time.Time `json:"lease_expires_at"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &heartbeatResp); err != nil {
+		t.Fatalf("decode heartbeat response: %v", err)
+	}
+	if heartbeatResp.Data.RecordingID != active.ID || !heartbeatResp.Data.HeartbeatAt.After(oldHeartbeat) || heartbeatResp.Data.LeaseExpiresAt.Sub(heartbeatResp.Data.HeartbeatAt) != time.Minute {
+		t.Fatalf("heartbeat response = %+v", heartbeatResp.Data)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/recordings/%d/download-url", completed.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("download location status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var downloadResp struct {
+		Data struct {
+			RecordingID uint   `json:"recording_id"`
+			DownloadURL string `json:"download_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &downloadResp); err != nil {
+		t.Fatalf("decode download location response: %v", err)
+	}
+	wantURL := fmt.Sprintf("/api/v1/recordings/%d/download", completed.ID)
+	if downloadResp.Data.RecordingID != completed.ID || downloadResp.Data.DownloadURL != wantURL {
+		t.Fatalf("download location = %+v, want id=%d url=%q", downloadResp.Data, completed.ID, wantURL)
 	}
 }
 

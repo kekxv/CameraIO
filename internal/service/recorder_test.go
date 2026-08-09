@@ -50,6 +50,130 @@ func TestRecorderService_StartRecording_NoCamera(t *testing.T) {
 	}
 }
 
+func TestStartRecordingManualCreatesSingleFileHeartbeatSession(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	camera := &model.Camera{Name: "front", RTSPUrl: "rtsp://camera/live", AccessProtocol: model.ProtocolRTSP}
+	if err := db.Create(camera).Error; err != nil {
+		t.Fatalf("create camera: %v", err)
+	}
+
+	cfg := pkg.DefaultConfig()
+	cfg.RecordingsDir = t.TempDir()
+	svc := NewRecorderService(db, cfg)
+	svc.ffmpegCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestRecorderProcessHelper", "--")
+		cmd.Env = append(os.Environ(), "CAMERAIO_RECORDER_HELPER=1")
+		return cmd
+	}
+
+	recording, err := svc.StartRecording(&StartRecordingInput{
+		CameraID:    camera.ID,
+		Format:      model.FormatMP4,
+		TriggerType: model.TriggerManual,
+		Remark:      "柜员交接",
+	})
+	if err != nil {
+		t.Fatalf("StartRecording: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.StopRecording(recording.ID) })
+
+	if recording.StorageMode != model.StorageModeLegacy {
+		t.Fatalf("storage mode = %q, want %q", recording.StorageMode, model.StorageModeLegacy)
+	}
+	if recording.HeartbeatAt == nil {
+		t.Fatal("manual recording has no heartbeat")
+	}
+	if recording.Remark != "柜员交接" {
+		t.Fatalf("remark = %q, want %q", recording.Remark, "柜员交接")
+	}
+	svc.mu.Lock()
+	task := svc.tasks[recording.ID]
+	svc.mu.Unlock()
+	if task == nil || task.segmenter != nil {
+		t.Fatal("manual recording was not started as a single-file task")
+	}
+}
+
+func TestHeartbeatRecordingRefreshesActiveManualLease(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	before := time.Now().UTC().Add(-time.Minute)
+	recording := &model.Recording{
+		CameraID:    1,
+		FilePath:    filepath.Join(t.TempDir(), "manual.mp4"),
+		StartTime:   before.Add(-time.Minute),
+		TriggerType: model.TriggerManual,
+		Status:      model.RecordingStatusRecording,
+		Format:      model.FormatMP4,
+		StorageMode: model.StorageModeLegacy,
+		HeartbeatAt: &before,
+	}
+	if err := db.Create(recording).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+
+	updated, err := NewRecorderService(db, &pkg.Config{}).HeartbeatRecording(recording.ID)
+	if err != nil {
+		t.Fatalf("HeartbeatRecording: %v", err)
+	}
+	if updated.HeartbeatAt == nil || !updated.HeartbeatAt.After(before) {
+		t.Fatalf("heartbeat_at = %v, want after %v", updated.HeartbeatAt, before)
+	}
+}
+
+func TestSweepExpiredManualHeartbeatsStopsOnlyExpiredManualLegacyTask(t *testing.T) {
+	db, cleanup := setupRecorderTestDB(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	expired := now.Add(-61 * time.Second)
+	fresh := now.Add(-30 * time.Second)
+	newRecording := func(trigger, storageMode string, heartbeatAt *time.Time) *model.Recording {
+		recording := &model.Recording{
+			CameraID: 1, FilePath: filepath.Join(t.TempDir(), fmt.Sprintf("%d.mp4", time.Now().UnixNano())),
+			StartTime: now.Add(-2 * time.Minute), TriggerType: trigger, Status: model.RecordingStatusRecording,
+			Format: model.FormatMP4, StorageMode: storageMode, HeartbeatAt: heartbeatAt,
+		}
+		if err := db.Create(recording).Error; err != nil {
+			t.Fatalf("create recording: %v", err)
+		}
+		return recording
+	}
+	expiredManual := newRecording(model.TriggerManual, model.StorageModeLegacy, &expired)
+	freshManual := newRecording(model.TriggerManual, model.StorageModeLegacy, &fresh)
+	scheduled := newRecording(model.TriggerSchedule, model.StorageModeLegacy, &expired)
+	segmented := newRecording(model.TriggerManual, model.StorageModeSegmented, &expired)
+
+	svc := NewRecorderService(db, &pkg.Config{})
+	for _, recording := range []*model.Recording{expiredManual, freshManual, scheduled, segmented} {
+		svc.tasks[recording.ID] = &recordTask{
+			recording: recording, cmd: &exec.Cmd{}, cancel: func() {}, stderr: &bytes.Buffer{}, done: make(chan struct{}),
+		}
+	}
+
+	svc.sweepExpiredManualHeartbeats(now)
+
+	var updated model.Recording
+	if err := db.First(&updated, expiredManual.ID).Error; err != nil {
+		t.Fatalf("load expired recording: %v", err)
+	}
+	if updated.Status != model.RecordingStatusCompleted {
+		t.Fatalf("expired manual status = %q, want completed", updated.Status)
+	}
+	svc.mu.Lock()
+	_, expiredActive := svc.tasks[expiredManual.ID]
+	_, freshActive := svc.tasks[freshManual.ID]
+	_, scheduledActive := svc.tasks[scheduled.ID]
+	_, segmentedActive := svc.tasks[segmented.ID]
+	svc.mu.Unlock()
+	if expiredActive || !freshActive || !scheduledActive || !segmentedActive {
+		t.Fatalf("task activity = expired:%v fresh:%v scheduled:%v segmented:%v", expiredActive, freshActive, scheduledActive, segmentedActive)
+	}
+}
+
 func TestRecorderService_List_Empty(t *testing.T) {
 	db, cleanup := setupRecorderTestDB(t)
 	defer cleanup()

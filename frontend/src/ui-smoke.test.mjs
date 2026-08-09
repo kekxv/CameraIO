@@ -279,6 +279,18 @@ test('live view lets operators select the cameras shown in the preview grid', ()
   assert.match(live, /clearCameraSelection/)
 })
 
+test('live view starts a manual single-file session with a remark and heartbeat lease', () => {
+  const live = readFileSync(new URL('./views/Live.vue', import.meta.url), 'utf8')
+
+  assert.match(live, /<el-input\s+v-model="recordRemark"/)
+  assert.match(live, /录像备注/)
+  assert.match(live, /trigger_type:\s*'manual'/)
+  assert.match(live, /remark:\s*recordRemark\.value/)
+  assert.match(live, /heartbeatRecording/)
+  assert.match(live, /setInterval\([\s\S]*?,\s*30000\)/)
+  assert.match(live, /clearManualRecordingHeartbeat/)
+})
+
 test('Element Plus owns the live picker trigger and selection control labels', () => {
   const cameras = readFileSync(new URL('./views/Cameras.vue', import.meta.url), 'utf8')
   const live = readFileSync(new URL('./views/Live.vue', import.meta.url), 'utf8')

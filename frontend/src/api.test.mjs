@@ -217,6 +217,35 @@ test('camera, live, recording, and schedule actions retain their API endpoints',
   }
 })
 
+test('manual recording sessions use heartbeat and download-location endpoints', async () => {
+  const originalAdapter = api.defaults.adapter
+  const requests = []
+  api.defaults.adapter = async (config) => {
+    requests.push(config)
+    return {
+      data: { code: 0, data: { id: 9, recording_id: 9 } },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+
+  try {
+    await apiModule.startRecording(7, { trigger_type: 'manual', remark: '柜员交接' })
+    await apiModule.heartbeatRecording(9)
+    await apiModule.getRecordingDownloadLocation(9)
+
+    assert.deepEqual(requests.map(({ method, url, data }) => ({ method, url, data })), [
+      { method: 'post', url: '/recordings/start', data: JSON.stringify({ camera_id: 7, trigger_type: 'manual', remark: '柜员交接', format: 'mp4', bitrate: 0 }) },
+      { method: 'post', url: '/recordings/9/heartbeat', data: undefined },
+      { method: 'get', url: '/recordings/9/download-url', data: undefined },
+    ])
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+})
+
 test('getAPIErrorMessage reads a JSON error Blob from a snapshot request', async () => {
   const message = await getAPIErrorMessage({
     message: 'Request failed with status code 502',
