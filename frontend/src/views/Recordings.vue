@@ -395,21 +395,6 @@
             正在缓冲下一片段...
           </div>
         </div>
-        <div v-if="playbackState.timeline && playbackState.timeline.length" class="px-4 py-3 border-t border-slate-200">
-          <p class="mb-2 text-xs text-slate-500">播放片段</p>
-          <div class="compat-flex-gap-1 flex-wrap">
-            <button
-              v-for="segment in playbackState.timeline.slice(0, 5)"
-              :key="segment.id"
-              type="button"
-              class="rounded border px-2 py-1 text-xs"
-              :class="playbackState.point && playbackState.point.segment.id === segment.id ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'"
-              @click="selectTimelineSegment(segment)"
-            >
-              {{ formatTime(segment.start_time) }}
-            </button>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -592,7 +577,6 @@ const playbackState = ref({
   error: '',
   loading: false,
   loadingNext: false,
-  timeline: [],
 })
 let eventWs = null
 
@@ -807,11 +791,6 @@ const openTimePlayback = async (rec) => {
     timeSearch.at = toDatetimeLocal(rec.start_time)
   }
   await playSelectedTime(rec ? rec.start_time : timeSearch.at)
-}
-
-const selectTimelineSegment = async (segment) => {
-  timeSearch.at = toDatetimeLocal(segment.start_time)
-  await playSelectedTime(segment.start_time)
 }
 
 const closeTimePlayback = () => {

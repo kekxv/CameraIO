@@ -29,10 +29,9 @@ type TimelineSegment struct {
 
 // PlaybackPoint identifies the segment and media offset for a wall-clock time.
 type PlaybackPoint struct {
-	Segment       TimelineSegment   `json:"segment"`
-	Segments      []TimelineSegment `json:"segments"`
-	OffsetMS      int64             `json:"offset_ms"`
-	NextSegmentID *uint             `json:"next_segment_id"`
+	Segment       TimelineSegment `json:"segment"`
+	OffsetMS      int64           `json:"offset_ms"`
+	NextSegmentID *uint           `json:"next_segment_id"`
 }
 
 // ListTimeline returns completed segments whose half-open intervals overlap
@@ -84,28 +83,14 @@ func (s *RecorderService) ResolvePlaybackPoint(cameraID uint, at time.Time) (*Pl
 		OffsetMS: clampPlaybackOffset(at.Sub(stored.StartTime).Milliseconds(), stored.DurationMS),
 	}
 
-	var candidates []model.RecordingSegment
-	result = s.db.
-		Where("camera_id = ? AND duration_ms > 0 AND status = ? AND (start_time > ? OR (start_time = ? AND id >= ?))", cameraID, model.RecordingStatusCompleted, stored.StartTime, stored.StartTime, stored.ID).
-		Order("start_time ASC, id ASC").
-		Limit(5).
-		Find(&candidates)
+	var next model.RecordingSegment
+	result = s.db.Where("camera_id = ? AND duration_ms > 0 AND status = ? AND start_time > ?", cameraID, model.RecordingStatusCompleted, stored.StartTime).Order("start_time ASC, id ASC").Limit(1).Find(&next)
 	if result.Error != nil {
 		return nil, result.Error
 	}
 
-	point.Segments = make([]TimelineSegment, 0, len(candidates))
-	for i := range candidates {
-		if i > 0 {
-			gap := candidates[i].StartTime.Sub(candidates[i-1].EndTime)
-			if gap < -2*time.Second || gap > 2*time.Second {
-				break
-			}
-		}
-		point.Segments = append(point.Segments, timelineSegment(candidates[i]))
-	}
-	if len(point.Segments) > 1 {
-		nextID := point.Segments[1].ID
+	if result.RowsAffected > 0 && next.StartTime.Sub(stored.EndTime) >= -2*time.Second && next.StartTime.Sub(stored.EndTime) <= 2*time.Second {
+		nextID := next.ID
 		point.NextSegmentID = &nextID
 	}
 	return point, nil

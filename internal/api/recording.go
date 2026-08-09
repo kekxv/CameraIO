@@ -170,7 +170,6 @@ func (h *Handler) RecordingPlayAt(c *gin.Context) {
 
 	ok(c, gin.H{
 		"segment":         point.Segment,
-		"segments":        point.Segments,
 		"media_url":       fmt.Sprintf("/api/v1/recording-segments/%d/media", point.Segment.ID),
 		"offset_ms":       point.OffsetMS,
 		"next_segment_id": point.NextSegmentID,

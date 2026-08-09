@@ -686,11 +686,10 @@ func TestRecordingPlayAtReturnsMediaURLAndOffset(t *testing.T) {
 	}
 	var resp struct {
 		Data struct {
-			Segment       service.TimelineSegment   `json:"segment"`
-			Segments      []service.TimelineSegment `json:"segments"`
-			MediaURL      string                    `json:"media_url"`
-			OffsetMS      int64                     `json:"offset_ms"`
-			NextSegmentID *uint                     `json:"next_segment_id"`
+			Segment       service.TimelineSegment `json:"segment"`
+			MediaURL      string                  `json:"media_url"`
+			OffsetMS      int64                   `json:"offset_ms"`
+			NextSegmentID *uint                   `json:"next_segment_id"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -703,16 +702,14 @@ func TestRecordingPlayAtReturnsMediaURLAndOffset(t *testing.T) {
 	if resp.Data.NextSegmentID == nil || *resp.Data.NextSegmentID != next.ID {
 		t.Fatalf("next_segment_id = %v, want %d", resp.Data.NextSegmentID, next.ID)
 	}
-	if len(resp.Data.Segments) != 5 {
-		t.Fatalf("playback segments = %+v, want five entries", resp.Data.Segments)
+	var raw struct {
+		Data map[string]json.RawMessage `json:"data"`
 	}
-	for i, segment := range resp.Data.Segments {
-		if segment.ID != window[i].ID {
-			t.Fatalf("playback segment %d = %d, want %d", i, segment.ID, window[i].ID)
-		}
-		if i > 0 && segment.StartTime.Before(resp.Data.Segments[i-1].StartTime) {
-			t.Fatalf("playback segments are not chronological: %+v", resp.Data.Segments)
-		}
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw play-at response: %v", err)
+	}
+	if _, ok := raw.Data["segments"]; ok {
+		t.Fatal("play-at must return one segment at a time, not a playback list")
 	}
 }
 

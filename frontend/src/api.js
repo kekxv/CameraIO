@@ -266,7 +266,6 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
     error: '',
     loading: false,
     loadingNext: false,
-    timeline: [],
   }
 
   const notify = () => {
@@ -298,22 +297,10 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
   }
   const nextSlot = () => (state.activeSlot === 0 ? 1 : 0)
 
-  const timelineFor = (point) => {
-    const segments = point && Array.isArray(point.segments) && point.segments.length
-      ? point.segments
-      : Array.from(segmentByID.values())
-    return segments
-      .slice()
-      .sort((left, right) => new Date(left.start_time).getTime() - new Date(right.start_time).getTime())
-      .slice(0, 5)
-  }
-
   const rememberPoint = (point) => {
-    const segments = point && point.segments ? point.segments : []
-    if (point && point.segment) segments.concat([point.segment]).forEach((segment) => {
+    if (point && point.segment) [point.segment].forEach((segment) => {
       if (segment && segment.id != null) segmentByID.set(segment.id, segment)
     })
-    return timelineFor(point)
   }
 
   const primeNext = (segmentID) => {
@@ -380,7 +367,8 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
       })
       if (!isCurrentOperation()) return
       playbackAt = segmentAt
-      setState({ point: resolved, timeline: rememberPoint(resolved) })
+      rememberPoint(resolved)
+      setState({ point: resolved })
       if (resolved.next_segment_id) setSource(oldSlot, resolved.next_segment_id)
       else clearVideo(videos[oldSlot], false)
     } catch (err) {
@@ -396,13 +384,13 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
     attach(slot, video) {
       videos[slot] = video
     },
-    async open({ cameraId, at, segments }) {
+    async open({ cameraId, at }) {
       generation += 1
       const currentGeneration = generation
       if (state.open) clearAllVideos(true)
       cameraID = cameraId
       playbackAt = at
-      segmentByID = new Map((segments || []).map((segment) => [segment.id, segment]))
+      segmentByID = new Map()
       pendingSwap = false
       state = {
         open: true,
@@ -412,15 +400,14 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
         error: '',
         loading: true,
         loadingNext: false,
-        timeline: [],
       }
       notify()
       try {
         const point = await resolvePlayback({ camera_id: cameraId, at })
         if (currentGeneration !== generation) return
-        const timeline = rememberPoint(point)
+        rememberPoint(point)
         setSource(0, point.segment.id)
-        setState({ point, timeline, loading: false })
+        setState({ point, loading: false })
         primeNext(point.next_segment_id)
       } catch (err) {
         if (currentGeneration !== generation) return
@@ -462,7 +449,6 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
         error: '',
         loading: false,
         loadingNext: false,
-        timeline: [],
       }
       notify()
     },

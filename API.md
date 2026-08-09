@@ -469,9 +469,8 @@ curl -G http://localhost:8080/api/v1/recordings/timeline \
 ### GET /recordings/play-at
 
 解析指定摄像头在某一 UTC 时刻应播放的片段和片内偏移。`at` 必须是
-RFC3339 UTC 时间；该时刻没有录像覆盖时返回 404。响应的 `segments` 是按时间
-排序的有界播放窗口：从命中的 `segment` 开始，包含该片段及至多四个连续的后续
-片段（最多五个）；遇到不连续边界时窗口结束。
+RFC3339 UTC 时间；该时刻没有录像覆盖时返回 404。响应只包含当前 `segment`；
+`next_segment_id` 仅在下一片段连续可播时提供，客户端在当前段结束后再加载下一段。
 
 ```bash
 curl -G http://localhost:8080/api/v1/recordings/play-at \
@@ -496,26 +495,6 @@ curl -G http://localhost:8080/api/v1/recordings/play-at \
       "file_size": 4194304,
       "status": "completed"
     },
-    "segments": [
-      {
-        "id": 301,
-        "recording_id": 105,
-        "start_time": "2026-08-08T10:00:00Z",
-        "end_time": "2026-08-08T10:01:00Z",
-        "duration_ms": 60000,
-        "file_size": 4194304,
-        "status": "completed"
-      },
-      {
-        "id": 302,
-        "recording_id": 105,
-        "start_time": "2026-08-08T10:01:00Z",
-        "end_time": "2026-08-08T10:02:00Z",
-        "duration_ms": 60000,
-        "file_size": 4194304,
-        "status": "completed"
-      }
-    ],
     "media_url": "/api/v1/recording-segments/301/media",
     "offset_ms": 2500,
     "next_segment_id": 302
@@ -523,8 +502,8 @@ curl -G http://localhost:8080/api/v1/recordings/play-at \
 }
 ```
 
-`next_segment_id` 仅在紧邻的下一片段可连续播放时提供，否则为 `null`。客户端应以
-`segments` 驱动回放队列；该窗口刻意限制为五个视频，而不是完整录像历史。
+`next_segment_id` 仅在紧邻的下一片段可连续播放时提供，否则为 `null`。客户端按
+该标识逐段续播，不显示播放列表。
 
 ### GET /recording-segments/:id/media
 

@@ -80,7 +80,6 @@ const renderRecordings = async (overrides = {}) => {
     playbackState: {
       activeSlot: 0,
       point: { segment, offset_ms: 0, next_segment_id: null },
-      timeline: [segment],
       gap: false,
       error: '',
       loading: false,
@@ -94,7 +93,6 @@ const renderRecordings = async (overrides = {}) => {
     openRecordingPreview() {},
     closeTimePlayback() {},
     closeLegacyPreview() {},
-    selectTimelineSegment() {},
     attachPlaybackVideo() {},
     handlePlaybackMetadata() {},
     handlePlaybackCanPlay() {},
@@ -260,6 +258,7 @@ test('recording playback seeks after metadata and swaps only when the preloaded 
   const resolveCalls = []
   const coordinator = recordingBehavior.createRecordingPlaybackCoordinator({
     mediaUrl: (id) => `/media/${id}.mp4`,
+    loadTimeline: async () => ({ segments: [segments[1]] }),
     resolvePlayback: async (params) => {
       resolveCalls.push(params)
       if (params.at === '2026-08-08T10:00:02.500Z') {
@@ -271,7 +270,7 @@ test('recording playback seeks after metadata and swaps only when the preloaded 
   coordinator.attach(0, first)
   coordinator.attach(1, second)
 
-  await coordinator.open({ cameraId: 7, at: '2026-08-08T10:00:02.500Z', segments })
+  await coordinator.open({ cameraId: 7, at: '2026-08-08T10:00:02.500Z' })
   assert.equal(first.src, '/media/1.mp4')
   assert.equal(second.src, '/media/2.mp4')
   coordinator.loadedMetadata(0)
@@ -298,7 +297,7 @@ test('recording playback seeks after metadata and swaps only when the preloaded 
   assert.equal(second.pauseCalls, 1)
 })
 
-test('recording playback opens at an arbitrary time with the returned bounded timeline', async () => {
+test('recording playback opens one segment at an arbitrary time without a playback list', async () => {
   const segments = [0, 1, 2, 3, 4].map((index) => ({
     id: index + 1,
     start_time: `2026-08-01T0${index}:00:00Z`,
@@ -311,13 +310,13 @@ test('recording playback opens at an arbitrary time with the returned bounded ti
     loadTimeline: async () => { timelineCalls += 1; return { segments: [] } },
     resolvePlayback: async (params) => {
       assert.deepEqual(params, { camera_id: 7, at: '2026-08-09T07:50:00.000Z' })
-      return { segment: segments[2], offset_ms: 0, next_segment_id: segments[3].id, segments }
+      return { segment: segments[2], offset_ms: 0, next_segment_id: segments[3].id }
     },
   })
 
   await coordinator.open({ cameraId: 7, at: '2026-08-09T07:50:00.000Z' })
 
-  assert.deepEqual(coordinator.state.timeline, segments)
+  assert.equal(coordinator.state.timeline, undefined)
   assert.equal(timelineCalls, 0)
 })
 
@@ -428,7 +427,7 @@ test('recording playback exposes a gap state for a missing selected time', async
   assert.equal(coordinator.state.error, '')
 })
 
-test('recording center renders date history controls and a bounded playback timeline', async () => {
+test('recording center renders date history controls and sequential playback', async () => {
   const html = await renderRecordings()
 
   assert.equal((html.match(/type="date"/g) || []).length, 2)
@@ -438,7 +437,7 @@ test('recording center renders date history controls and a bounded playback time
   assert.match(html, /至/)
   assert.match(html, /清除日期/)
   assert.match(html, /查询历史/)
-  assert.match(html, /播放片段/)
+  assert.doesNotMatch(html, /播放片段/)
   assert.equal((html.match(/<video/g) || []).length, 2)
   assert.match(html, /preload="auto"/)
   assert.match(html, /导出尚未实现/)
@@ -452,37 +451,6 @@ test('recording center preloads the hidden player without autoplaying it', async
   assert.equal(videos.length, 2)
   assert.equal(videos.filter((video) => video.includes(' autoplay')).length, 1)
   assert.equal(videos.filter((video) => video.includes('style="display:none;"')).length, 1)
-})
-
-test('recording timeline selection sends the exact segment timestamp to play-at', async () => {
-  globalThis.localStorage = { getItem: () => null, removeItem: () => {} }
-  const api = recordingBehavior.default
-  const originalAdapter = api.defaults.adapter
-  let request
-  api.defaults.adapter = async (config) => {
-    request = config
-    return {
-      data: { code: 0, data: { segment: { id: 8 }, offset_ms: 0, next_segment_id: null, segments: [] } },
-      status: 200,
-      statusText: 'OK',
-      headers: {},
-      config,
-    }
-  }
-
-  try {
-    const setup = await loadRecordingsSetup()
-    setup.timeSearch.cameraId = 7
-    await setup.selectTimelineSegment({ id: 8, start_time: '2026-08-09T07:50:37.123Z' })
-
-    assert.deepEqual(request.params, {
-      camera_id: 7,
-      at: '2026-08-09T07:50:37.123Z',
-    })
-    assert.equal(setup.timeSearch.at, '2026-08-09T07:50:37')
-  } finally {
-    api.defaults.adapter = originalAdapter
-  }
 })
 
 test('segmented recording preview sends its exact ISO start timestamp to play-at', async () => {
