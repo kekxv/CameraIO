@@ -505,6 +505,15 @@ curl -G http://localhost:8080/api/v1/recordings/play-at \
         "duration_ms": 60000,
         "file_size": 4194304,
         "status": "completed"
+      },
+      {
+        "id": 302,
+        "recording_id": 105,
+        "start_time": "2026-08-08T10:01:00Z",
+        "end_time": "2026-08-08T10:02:00Z",
+        "duration_ms": 60000,
+        "file_size": 4194304,
+        "status": "completed"
       }
     ],
     "media_url": "/api/v1/recording-segments/301/media",
