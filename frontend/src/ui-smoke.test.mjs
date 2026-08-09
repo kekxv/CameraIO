@@ -48,34 +48,30 @@ const renderRecordings = async (overrides = {}) => {
     weekdays: [],
     timeSearch: {
       cameraId: 7,
-      from: '2026-08-08T10:00',
-      to: '2026-08-08T11:00',
+      startDate: '2026-08-08',
+      endDate: '2026-08-08',
       at: '2026-08-08T10:15',
     },
-    searchingTimeline: false,
     timelineError: '',
-    coverageParts: [
-      { type: 'gap', startPercent: 0, widthPercent: 16.666, start_time: '2026-08-08T10:00:00Z', end_time: segment.start_time, segment: null },
-      { type: 'recording', startPercent: 16.666, widthPercent: 16.666, start_time: segment.start_time, end_time: segment.end_time, segment },
-    ],
-    selectedTimePercent: 25,
     timePlaybackOpen: true,
     playbackState: {
       activeSlot: 0,
       point: { segment, offset_ms: 0, next_segment_id: null },
+      timeline: [segment],
       gap: false,
       error: '',
       loading: false,
       loadingNext: false,
     },
     loadRecordings() {},
-    searchTimeline() {},
+    applyHistoryFilters() {},
+    clearDateRange() {},
     playSelectedTime() {},
     openTimePlayback() {},
     openRecordingPreview() {},
     closeTimePlayback() {},
     closeLegacyPreview() {},
-    selectCoveragePart() {},
+    selectTimelineSegment() {},
     attachPlaybackVideo() {},
     handlePlaybackMetadata() {},
     handlePlaybackCanPlay() {},
@@ -174,27 +170,25 @@ test('recordings view preserves recording and schedule actions in a responsive s
   assert.match(recordings, /overflow-x-auto/)
 })
 
-test('recording time search converts local wall-clock values to UTC and rejects ranges over 24 hours', () => {
-  assert.equal(typeof recordingBehavior.normalizeRecordingSearch, 'function')
+test('recording history filters use local date boundaries and playback resolves independently', () => {
+  assert.equal(typeof recordingBehavior.normalizeRecordingDateRange, 'function')
+  assert.equal(typeof recordingBehavior.normalizeRecordingPlayback, 'function')
 
-  assert.deepEqual(recordingBehavior.normalizeRecordingSearch({
+  assert.deepEqual(recordingBehavior.normalizeRecordingDateRange({}), {})
+  assert.deepEqual(recordingBehavior.normalizeRecordingDateRange({
+    startDate: '2026-08-02',
+    endDate: '2026-08-09',
+  }), {
+    start_time: '2026-08-02T00:00:00.000Z',
+    end_time: '2026-08-10T00:00:00.000Z',
+  })
+  assert.deepEqual(recordingBehavior.normalizeRecordingPlayback({
     cameraId: 7,
-    from: '2026-08-08T09:00',
-    to: '2026-08-08T10:00',
-    at: '2026-08-08T09:15',
+    at: '2026-08-09T07:50',
   }), {
     camera_id: 7,
-    from: '2026-08-08T09:00:00.000Z',
-    to: '2026-08-08T10:00:00.000Z',
-    at: '2026-08-08T09:15:00.000Z',
+    at: '2026-08-09T07:50:00.000Z',
   })
-
-  assert.throws(() => recordingBehavior.normalizeRecordingSearch({
-    cameraId: 7,
-    from: '2026-08-07T09:59',
-    to: '2026-08-08T10:00',
-    at: '2026-08-08T09:15',
-  }), /24/)
 })
 
 test('recording coverage describes completed ranges and explicit gaps', () => {
@@ -279,6 +273,29 @@ test('recording playback seeks after metadata and swaps only when the preloaded 
   assert.equal(second.src, '')
   assert.equal(first.pauseCalls, 1)
   assert.equal(second.pauseCalls, 1)
+})
+
+test('recording playback opens at an arbitrary time with the returned bounded timeline', async () => {
+  const segments = [0, 1, 2, 3, 4].map((index) => ({
+    id: index + 1,
+    start_time: `2026-08-01T0${index}:00:00Z`,
+    end_time: `2026-08-01T0${index}:01:00Z`,
+    status: 'completed',
+  }))
+  let timelineCalls = 0
+  const coordinator = recordingBehavior.createRecordingPlaybackCoordinator({
+    mediaUrl: (id) => `/media/${id}.mp4`,
+    loadTimeline: async () => { timelineCalls += 1; return { segments: [] } },
+    resolvePlayback: async (params) => {
+      assert.deepEqual(params, { camera_id: 7, at: '2026-08-09T07:50:00.000Z' })
+      return { segment: segments[2], offset_ms: 0, next_segment_id: segments[3].id, segments }
+    },
+  })
+
+  await coordinator.open({ cameraId: 7, at: '2026-08-09T07:50:00.000Z' })
+
+  assert.deepEqual(coordinator.state.timeline, segments)
+  assert.equal(timelineCalls, 0)
 })
 
 test('recording playback discovers metadata beyond the searched boundary and preloads the third segment', async () => {
@@ -388,13 +405,16 @@ test('recording playback exposes a gap state for a missing selected time', async
   assert.equal(coordinator.state.error, '')
 })
 
-test('recording center renders wall-clock coverage and seekable dual-video playback behavior', async () => {
+test('recording center renders date history controls and a bounded playback timeline', async () => {
   const html = await renderRecordings()
 
-  assert.equal((html.match(/type="datetime-local"/g) || []).length, 3)
+  assert.equal((html.match(/type="date"/g) || []).length, 2)
+  assert.equal((html.match(/type="datetime-local"/g) || []).length, 1)
   assert.match(html, /North Gate/)
-  assert.match(html, /录像空档/)
-  assert.match(html, /可播放录像/)
+  assert.match(html, /至/)
+  assert.match(html, /清除日期/)
+  assert.match(html, /查询历史/)
+  assert.match(html, /播放片段/)
   assert.equal((html.match(/<video/g) || []).length, 2)
   assert.match(html, /preload="auto"/)
   assert.match(html, /导出尚未实现/)

@@ -127,8 +127,6 @@ export const getSegmentMediaUrl = (id) => {
   return `/api/v1/recording-segments/${id}/media${suffix}`
 }
 
-const recordingRangeLimitMS = 24 * 60 * 60 * 1000
-
 const parseRecordingTime = (value, label) => {
   const parsed = new Date(value)
   if (!value || Number.isNaN(parsed.getTime())) {
@@ -137,20 +135,37 @@ const parseRecordingTime = (value, label) => {
   return parsed
 }
 
-export const normalizeRecordingSearch = ({ cameraId, from, to, at }) => {
-  const fromTime = parseRecordingTime(from, '开始时间')
-  const toTime = parseRecordingTime(to, '结束时间')
-  const atTime = parseRecordingTime(at, '播放时间')
-  const duration = toTime.getTime() - fromTime.getTime()
-  if (duration <= 0) throw new Error('结束时间必须晚于开始时间')
-  if (duration > recordingRangeLimitMS) throw new Error('查询范围不能超过 24 小时')
-  return {
-    camera_id: cameraId,
-    from: fromTime.toISOString(),
-    to: toTime.toISOString(),
-    at: atTime.toISOString(),
+const parseRecordingDate = (value, label) => {
+  if (!value) return null
+  const parts = value.split('-').map(Number)
+  if (parts.length !== 3 || parts.some((part) => !Number.isInteger(part))) {
+    throw new Error(`${label} 不是有效日期`)
   }
+  const date = new Date(parts[0], parts[1] - 1, parts[2])
+  if (date.getFullYear() !== parts[0] || date.getMonth() !== parts[1] - 1 || date.getDate() !== parts[2]) {
+    throw new Error(`${label} 不是有效日期`)
+  }
+  return date
 }
+
+export const normalizeRecordingDateRange = ({ startDate, endDate } = {}) => {
+  const start = parseRecordingDate(startDate, '开始日期')
+  const end = parseRecordingDate(endDate, '结束日期')
+  if (!start && !end) return {}
+
+  const params = {}
+  if (start) params.start_time = start.toISOString()
+  if (end) {
+    end.setDate(end.getDate() + 1)
+    params.end_time = end.toISOString()
+  }
+  return params
+}
+
+export const normalizeRecordingPlayback = ({ cameraId, at }) => ({
+  camera_id: cameraId,
+  at: parseRecordingTime(at, '播放时间').toISOString(),
+})
 
 export const buildRecordingCoverage = (segments, from, to) => {
   const fromMS = new Date(from).getTime()
@@ -204,6 +219,7 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
     error: '',
     loading: false,
     loadingNext: false,
+    timeline: [],
   }
 
   const notify = () => {
@@ -234,6 +250,24 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
     ready[1] = false
   }
   const nextSlot = () => (state.activeSlot === 0 ? 1 : 0)
+
+  const timelineFor = (point) => {
+    const segments = point && Array.isArray(point.segments) && point.segments.length
+      ? point.segments
+      : Array.from(segmentByID.values())
+    return segments
+      .slice()
+      .sort((left, right) => new Date(left.start_time).getTime() - new Date(right.start_time).getTime())
+      .slice(0, 5)
+  }
+
+  const rememberPoint = (point) => {
+    const segments = point && point.segments ? point.segments : []
+    if (point && point.segment) segments.concat([point.segment]).forEach((segment) => {
+      if (segment && segment.id != null) segmentByID.set(segment.id, segment)
+    })
+    return timelineFor(point)
+  }
 
   const primeNext = (segmentID) => {
     if (!segmentID) return
@@ -299,7 +333,7 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
       })
       if (!isCurrentOperation()) return
       playbackAt = segmentAt
-      setState({ point: resolved })
+      setState({ point: resolved, timeline: rememberPoint(resolved) })
       if (resolved.next_segment_id) setSource(oldSlot, resolved.next_segment_id)
       else clearVideo(videos[oldSlot], false)
     } catch (err) {
@@ -331,13 +365,15 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
         error: '',
         loading: true,
         loadingNext: false,
+        timeline: [],
       }
       notify()
       try {
         const point = await resolvePlayback({ camera_id: cameraId, at })
         if (currentGeneration !== generation) return
+        const timeline = rememberPoint(point)
         setSource(0, point.segment.id)
-        setState({ point, loading: false })
+        setState({ point, timeline, loading: false })
         primeNext(point.next_segment_id)
       } catch (err) {
         if (currentGeneration !== generation) return
@@ -379,6 +415,7 @@ export const createRecordingPlaybackCoordinator = ({ resolvePlayback, loadTimeli
         error: '',
         loading: false,
         loadingNext: false,
+        timeline: [],
       }
       notify()
     },

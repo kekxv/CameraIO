@@ -69,6 +69,24 @@ test('resource-safe recording options normalize persisted unsafe choices', () =>
   })
 })
 
+test('recording date range filters use local day boundaries without limiting history playback', () => {
+  assert.deepEqual(apiModule.normalizeRecordingDateRange({}), {})
+  assert.deepEqual(apiModule.normalizeRecordingDateRange({
+    startDate: '2026-08-02',
+    endDate: '2026-08-09',
+  }), {
+    start_time: '2026-08-02T00:00:00.000Z',
+    end_time: '2026-08-10T00:00:00.000Z',
+  })
+  assert.deepEqual(apiModule.normalizeRecordingPlayback({
+    cameraId: 7,
+    at: '2026-08-09T07:50',
+  }), {
+    camera_id: 7,
+    at: '2026-08-09T07:50:00.000Z',
+  })
+})
+
 test('captureSnapshot requests the native JPEG endpoint as a blob', async () => {
   const originalAdapter = api.defaults.adapter
   let request

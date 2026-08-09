@@ -37,7 +37,7 @@
             <label class="block text-xs font-medium text-slate-500 mb-1">摄像头</label>
             <select
               v-model="filter.cameraId"
-              @change="loadRecordings"
+              @change="applyHistoryFilters"
               class="ui-select"
             >
               <option :value="null">全部</option>
@@ -50,7 +50,7 @@
             <label class="block text-xs font-medium text-slate-500 mb-1">状态</label>
             <select
               v-model="filter.status"
-              @change="loadRecordings"
+              @change="applyHistoryFilters"
               class="ui-select"
             >
               <option value="">全部</option>
@@ -59,6 +59,16 @@
               <option value="failed">失败</option>
             </select>
           </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">录像日期</label>
+            <div class="compat-flex-gap-1 items-center">
+              <input v-model="timeSearch.startDate" type="date" class="ui-input" aria-label="开始日期" />
+              <span class="text-sm text-slate-500">至</span>
+              <input v-model="timeSearch.endDate" type="date" class="ui-input" aria-label="结束日期" />
+            </div>
+          </div>
+          <button @click="clearDateRange" class="ui-button-secondary">清除日期</button>
+          <button @click="applyHistoryFilters" class="ui-button-primary">查询历史</button>
           <button
             @click="loadRecordings"
             class="ui-button-secondary"
@@ -72,7 +82,7 @@
         </div>
       </div>
 
-      <!-- 按时间查找录像 -->
+      <!-- 按时间播放 -->
       <div class="ui-card p-4 mb-4">
         <div class="flex flex-wrap items-end compat-flex-gap-3">
           <div>
@@ -84,62 +94,18 @@
             </select>
           </div>
           <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">范围开始</label>
-            <input v-model="timeSearch.from" type="datetime-local" class="ui-input" />
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">范围结束</label>
-            <input v-model="timeSearch.to" type="datetime-local" class="ui-input" />
-          </div>
-          <div>
             <label class="block text-xs font-medium text-slate-500 mb-1">播放时间</label>
             <input v-model="timeSearch.at" type="datetime-local" class="ui-input" />
           </div>
           <button
-            class="ui-button-secondary disabled:opacity-50"
-            :disabled="searchingTimeline || !timeSearch.cameraId"
-            @click="searchTimeline"
-          >
-            {{ searchingTimeline ? '查询中...' : '查询覆盖' }}
-          </button>
-          <button
             class="ui-button-primary disabled:opacity-50"
-            :disabled="searchingTimeline || !timeSearch.cameraId"
+            :disabled="!timeSearch.cameraId"
             @click="playSelectedTime"
           >
             播放所选时间
           </button>
         </div>
-
         <p v-if="timelineError" class="mt-3 text-sm text-red-600">{{ timelineError }}</p>
-        <div v-else class="mt-4">
-          <div class="relative h-8 overflow-hidden rounded-md bg-slate-100" aria-label="录像覆盖时间轴">
-            <button
-              v-for="(part, index) in coverageParts"
-              :key="`${part.type}-${part.start_time}-${index}`"
-              type="button"
-              class="absolute top-0 h-full border-r border-white/70"
-              :class="part.type === 'recording' ? 'bg-emerald-400 hover:bg-emerald-500' : 'bg-slate-200 cursor-default'"
-              :style="{ left: `${part.startPercent}%`, width: `${part.widthPercent}%` }"
-              :title="coverageTitle(part)"
-              :aria-label="coverageTitle(part)"
-              @click="selectCoveragePart(part)"
-            ></button>
-            <span
-              v-if="selectedTimePercent !== null"
-              class="absolute top-0 h-full w-0.5 bg-red-600"
-              :style="{ left: `${selectedTimePercent}%` }"
-              aria-label="所选播放时间"
-            ></span>
-          </div>
-          <div class="mt-2 flex flex-wrap items-center justify-between text-xs text-slate-500">
-            <div class="compat-flex-gap-3">
-              <span><span class="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400 mr-1"></span>可播放录像</span>
-              <span><span class="inline-block w-2.5 h-2.5 rounded-sm bg-slate-200 mr-1"></span>录像空档</span>
-            </div>
-            <span>单次查询最多 24 小时</span>
-          </div>
-        </div>
       </div>
 
       <!-- 加载中 -->
@@ -419,13 +385,28 @@
             正在定位录像...
           </div>
           <div v-else-if="playbackState.gap" class="absolute inset-0 flex items-center justify-center text-sm text-white bg-black/70">
-            所选时间是录像空档
+            该时间没有录像
           </div>
           <div v-else-if="playbackState.error" class="absolute inset-0 flex items-center justify-center px-6 text-sm text-red-200 bg-black/70">
             {{ playbackState.error }}
           </div>
           <div v-else-if="playbackState.loadingNext" class="absolute inset-x-0 bottom-0 py-2 text-center text-xs text-white bg-black/60">
             正在缓冲下一片段...
+          </div>
+        </div>
+        <div v-if="playbackState.timeline && playbackState.timeline.length" class="px-4 py-3 border-t border-slate-200">
+          <p class="mb-2 text-xs text-slate-500">播放片段</p>
+          <div class="compat-flex-gap-1 flex-wrap">
+            <button
+              v-for="segment in playbackState.timeline.slice(0, 5)"
+              :key="segment.id"
+              type="button"
+              class="rounded border px-2 py-1 text-xs"
+              :class="playbackState.point && playbackState.point.segment.id === segment.id ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'"
+              @click="selectTimelineSegment(segment)"
+            >
+              {{ formatTime(segment.start_time) }}
+            </button>
           </div>
         </div>
       </div>
@@ -585,7 +566,7 @@ import {
   listCameras, listRecordings, stopRecording, deleteRecording,
   listSchedules, createSchedule, updateSchedule, deleteSchedule,
   connectEventBus, getRecordingTimeline, resolveRecordingPlayback,
-  getSegmentMediaUrl, normalizeRecordingSearch, buildRecordingCoverage,
+  getSegmentMediaUrl, normalizeRecordingDateRange, normalizeRecordingPlayback,
   createRecordingPlaybackCoordinator,
 	normalizeResourceSafeRecordingOptions,
 } from '../api'
@@ -599,9 +580,6 @@ const previewRec = ref(null)
 const schedules = ref([])
 const showScheduleDialog = ref(false)
 const savingSchedule = ref(false)
-const timelineSegments = ref([])
-const coverageParts = ref([])
-const searchingTimeline = ref(false)
 const timelineError = ref('')
 const timePlaybackOpen = ref(false)
 const playbackState = ref({
@@ -611,6 +589,7 @@ const playbackState = ref({
   error: '',
   loading: false,
   loadingNext: false,
+  timeline: [],
 })
 let eventWs = null
 
@@ -621,8 +600,8 @@ const filter = reactive({
 
 const timeSearch = reactive({
   cameraId: null,
-  from: '',
-  to: '',
+  startDate: '',
+  endDate: '',
   at: '',
 })
 
@@ -669,6 +648,7 @@ const loadRecordings = async () => {
     const params = { page: page.value, page_size: pageSize }
     if (filter.cameraId) params.camera_id = filter.cameraId
     if (filter.status) params.status = filter.status
+    Object.assign(params, normalizeRecordingDateRange(timeSearch))
     const data = await listRecordings(params)
     recordings.value = data.recordings
     total.value = data.total
@@ -694,7 +674,6 @@ onMounted(async () => {
   initializeTimeSearch()
   await loadRecordings()
   await loadSchedules()
-  if (timeSearch.cameraId) await searchTimeline()
 
   eventWs = connectEventBus((event) => {
     if (event.type === 'recording_status') {
@@ -712,6 +691,17 @@ const goPage = (p) => {
   if (p < 1 || p > totalPages.value) return
   page.value = p
   loadRecordings()
+}
+
+const applyHistoryFilters = async () => {
+  page.value = 1
+  await loadRecordings()
+}
+
+const clearDateRange = async () => {
+  timeSearch.startDate = ''
+  timeSearch.endDate = ''
+  await applyHistoryFilters()
 }
 
 const cameraName = (id) => {
@@ -773,57 +763,9 @@ const toDatetimeLocal = (value) => {
 }
 
 const initializeTimeSearch = () => {
-  const to = new Date()
-  const from = new Date(to.getTime() - 60 * 60 * 1000)
+  const now = new Date()
   timeSearch.cameraId = filter.cameraId || cameras.value[0]?.id || null
-  timeSearch.from = toDatetimeLocal(from)
-  timeSearch.to = toDatetimeLocal(to)
-  timeSearch.at = toDatetimeLocal(from)
-}
-
-const normalizedTimeSearch = () => normalizeRecordingSearch(timeSearch)
-
-const searchTimeline = async () => {
-  searchingTimeline.value = true
-  timelineError.value = ''
-  try {
-    const params = normalizedTimeSearch()
-    const data = await getRecordingTimeline({
-      camera_id: params.camera_id,
-      from: params.from,
-      to: params.to,
-    })
-    timelineSegments.value = data.segments || []
-    coverageParts.value = buildRecordingCoverage(timelineSegments.value, params.from, params.to)
-    return true
-  } catch (err) {
-    timelineSegments.value = []
-    coverageParts.value = []
-    timelineError.value = err.response?.data?.message || err.message || '录像覆盖查询失败'
-    return false
-  } finally {
-    searchingTimeline.value = false
-  }
-}
-
-const selectedTimePercent = computed(() => {
-  const from = new Date(timeSearch.from).getTime()
-  const to = new Date(timeSearch.to).getTime()
-  const at = new Date(timeSearch.at).getTime()
-  if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(at) || to <= from || at < from || at > to) {
-    return null
-  }
-  return ((at - from) / (to - from)) * 100
-})
-
-const coverageTitle = (part) => {
-  const label = part.type === 'recording' ? '可播放录像' : '录像空档'
-  return `${label}: ${formatTime(part.start_time)} - ${formatTime(part.end_time)}`
-}
-
-const selectCoveragePart = (part) => {
-  const midpoint = (new Date(part.start_time).getTime() + new Date(part.end_time).getTime()) / 2
-  timeSearch.at = toDatetimeLocal(new Date(midpoint))
+  timeSearch.at = toDatetimeLocal(now)
 }
 
 const attachPlaybackVideo = (slot, video) => {
@@ -835,28 +777,30 @@ const handlePlaybackCanPlay = (slot) => playbackCoordinator.canPlay(slot)
 const handlePlaybackEnded = (slot) => playbackCoordinator.ended(slot)
 
 const playSelectedTime = async () => {
-  const valid = await searchTimeline()
-  if (!valid) return
-  const params = normalizedTimeSearch()
-  timePlaybackOpen.value = true
-  await nextTick()
-  await playbackCoordinator.open({
-    cameraId: params.camera_id,
-    at: params.at,
-    segments: timelineSegments.value,
-  })
+  timelineError.value = ''
+  try {
+    const params = normalizeRecordingPlayback(timeSearch)
+    timePlaybackOpen.value = true
+    await nextTick()
+    await playbackCoordinator.open({
+      cameraId: params.camera_id,
+      at: params.at,
+    })
+  } catch (err) {
+    timelineError.value = err.response?.data?.message || err.message || '录像加载失败'
+  }
 }
 
 const openTimePlayback = async (rec) => {
   if (rec) {
-    const start = new Date(rec.start_time)
-    const recordedDuration = Math.max(60 * 1000, Number(rec.duration || 0) * 1000)
-    const end = new Date(start.getTime() + Math.min(recordedDuration, 24 * 60 * 60 * 1000))
     timeSearch.cameraId = rec.camera_id
-    timeSearch.from = toDatetimeLocal(start)
-    timeSearch.to = toDatetimeLocal(end)
-    timeSearch.at = toDatetimeLocal(start)
+    timeSearch.at = toDatetimeLocal(rec.start_time)
   }
+  await playSelectedTime()
+}
+
+const selectTimelineSegment = async (segment) => {
+  timeSearch.at = toDatetimeLocal(segment.start_time)
   await playSelectedTime()
 }
 
