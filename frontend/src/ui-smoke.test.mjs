@@ -258,6 +258,43 @@ test('recordings view preserves recording and schedule actions in a responsive s
   assert.match(recordings, /<el-table/)
 })
 
+test('every page keeps its Element Plus plain surface and core action without restoring manual playback', () => {
+  const pages = {
+    login: readFileSync(new URL('./views/Login.vue', import.meta.url), 'utf8'),
+    cameras: readFileSync(new URL('./views/Cameras.vue', import.meta.url), 'utf8'),
+    live: readFileSync(new URL('./views/Live.vue', import.meta.url), 'utf8'),
+    recordings: readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8'),
+  }
+
+  for (const [page, primitives] of Object.entries({
+    login: ['el-card', 'el-form', 'el-button'],
+    cameras: ['el-card', 'el-form', 'el-dialog', 'el-button'],
+    live: ['el-card', 'el-popover', 'el-dialog', 'el-button'],
+    recordings: ['el-card', 'el-table', 'el-dialog', 'el-button'],
+  })) {
+    for (const primitive of primitives) {
+      assert.match(pages[page], new RegExp(`<${primitive}`), `${page} must retain ${primitive}`)
+    }
+  }
+
+  assert.match(pages.login, /await login\(username\.value, password\.value\)/)
+  for (const action of ['createCamera', 'updateCamera', 'deleteCamera', 'scanNetwork']) {
+    assert.match(pages.cameras, new RegExp(`await ${action}`), `camera management must retain ${action}`)
+  }
+  for (const action of ['startStream', 'stopStream', 'startRecording', 'stopRecording', 'captureSnapshot']) {
+    assert.match(pages.live, new RegExp(`await ${action}`), `live view must retain ${action}`)
+  }
+  for (const action of ['listRecordings', 'stopRecording', 'deleteRecording', 'createSchedule', 'updateSchedule', 'deleteSchedule']) {
+    assert.match(pages.recordings, new RegExp(action), `recordings must retain ${action}`)
+  }
+
+  assert.match(pages.live, /<img[\s\S]*?:src="getMjpegUrl\(cam\.id\)"/)
+  assert.match(pages.recordings, /<video[\s\S]*?controls/)
+  for (const manualControl of ['播放摄像头', '播放时间', '播放所选时间', '播放片段']) {
+    assert.doesNotMatch(pages.recordings, new RegExp(manualControl), `recordings must not restore ${manualControl}`)
+  }
+})
+
 test('recordings center uses Element Plus filters, data surfaces, and single-video list preview', () => {
   const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
 

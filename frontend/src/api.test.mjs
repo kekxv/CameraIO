@@ -170,6 +170,49 @@ test('captureSnapshot requests the native JPEG endpoint as a blob', async () => 
   }
 })
 
+test('camera, live, recording, and schedule actions retain their API endpoints', async () => {
+  const originalAdapter = api.defaults.adapter
+  const requests = []
+  api.defaults.adapter = async (config) => {
+    requests.push(config)
+    return {
+      data: { code: 0, data: { id: 9 } },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+
+  try {
+    await apiModule.createCamera({ name: 'North Gate' })
+    await apiModule.updateCamera(7, { name: 'North Gate 2' })
+    await apiModule.deleteCamera(7)
+    await apiModule.startStream(7)
+    await apiModule.stopStream(7)
+    await apiModule.startRecording(7, { format: 'webm', bitrate: 1000 })
+    await apiModule.stopRecording(9)
+    await apiModule.createSchedule({ name: 'Daytime' })
+    await apiModule.updateSchedule(3, { enabled: true })
+    await apiModule.deleteSchedule(3)
+
+    assert.deepEqual(requests.map(({ method, url, data }) => ({ method, url, data })), [
+      { method: 'post', url: '/cameras', data: JSON.stringify({ name: 'North Gate' }) },
+      { method: 'put', url: '/cameras/7', data: JSON.stringify({ name: 'North Gate 2' }) },
+      { method: 'delete', url: '/cameras/7', data: undefined },
+      { method: 'post', url: '/streams/7/start', data: undefined },
+      { method: 'post', url: '/streams/7/stop', data: undefined },
+      { method: 'post', url: '/recordings/start', data: JSON.stringify({ camera_id: 7, format: 'mp4', bitrate: 0 }) },
+      { method: 'post', url: '/recordings/stop', data: JSON.stringify({ recording_id: 9 }) },
+      { method: 'post', url: '/schedules', data: JSON.stringify({ name: 'Daytime' }) },
+      { method: 'put', url: '/schedules/3', data: JSON.stringify({ enabled: true }) },
+      { method: 'delete', url: '/schedules/3', data: undefined },
+    ])
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+})
+
 test('getAPIErrorMessage reads a JSON error Blob from a snapshot request', async () => {
   const message = await getAPIErrorMessage({
     message: 'Request failed with status code 502',
