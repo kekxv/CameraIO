@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { parse } from 'postcss'
 
 const readBuiltCSS = () => readdirSync('dist/assets')
@@ -19,6 +21,37 @@ test('production bundle satisfies the Chrome 72 compatibility contract', () => {
   execFileSync('npm', ['run', 'build'], { stdio: 'inherit' })
   const result = execFileSync('node', ['scripts/assert-chrome72-build.mjs'], { encoding: 'utf8' })
   assert.match(result, /Chrome 72 compatibility check passed/)
+})
+
+test('the production Chrome 72 runtime installs a working Promise.allSettled', () => {
+  execFileSync('npm', ['run', 'build'], { stdio: 'inherit' })
+  const assetNames = readdirSync('dist/assets')
+  const runtimeName = assetNames.find((name) => /^polyfills-.*\.js$/.test(name))
+  assert.ok(runtimeName, 'the production build must emit the Chrome 72 runtime chunk')
+
+  const indexHTML = readFileSync('dist/index.html', 'utf8')
+  assert.ok(
+    indexHTML.indexOf(runtimeName) < indexHTML.search(/assets\/index-.*\.js/),
+    'the page must load the Chrome 72 runtime before the application entry',
+  )
+
+  const runtimeURL = pathToFileURL(resolve('dist/assets', runtimeName)).href
+  const probe = `
+    delete Promise.allSettled
+    await import(${JSON.stringify(runtimeURL)})
+    if (typeof Promise.allSettled !== 'function') throw new Error('Promise.allSettled was not installed')
+    const values = await Promise.allSettled([Promise.resolve('ok'), Promise.reject(new Error('no'))])
+    process.stdout.write(JSON.stringify(values.map(({ status, value, reason }) => ({
+      status,
+      value,
+      reason: reason && reason.message,
+    }))))
+  `
+  const result = execFileSync(process.execPath, ['--input-type=module', '--eval', probe], { encoding: 'utf8' })
+  assert.deepEqual(JSON.parse(result), [
+    { status: 'fulfilled', value: 'ok' },
+    { status: 'rejected', reason: 'no' },
+  ])
 })
 
 test('Element Plus flex layouts include generated spacing fallbacks for Chrome 72', () => {

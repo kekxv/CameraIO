@@ -9,6 +9,34 @@ import { renderToString } from '@vue/server-renderer'
 const css = readFileSync(new URL('./assets/main.css', import.meta.url), 'utf8')
 const recordingBehavior = await import('./api.js')
 
+const viewSource = (name) => readFileSync(new URL(`./views/${name}.vue`, import.meta.url), 'utf8')
+
+const renderTemplateFragment = async (source, startMarker, endMarker, context) => {
+  const template = parse(source).descriptor.template.content
+  const start = template.indexOf(startMarker)
+  const end = template.indexOf(endMarker, start + startMarker.length)
+  assert.notEqual(start, -1, `missing fragment start ${startMarker}`)
+  assert.notEqual(end, -1, `missing fragment end ${endMarker}`)
+  const includeEndMarker = endMarker.startsWith('</') ? endMarker.length : 0
+  const fragment = template.slice(start + startMarker.length, end + includeEndMarker)
+  const { code } = compile(`<div>${fragment}</div>`, { mode: 'function' })
+  const render = new Function('Vue', code)(Vue)
+  const app = Vue.createSSRApp({ setup: () => context, render })
+  app.component('el-dialog', {
+    setup(_, { slots }) {
+      return () => Vue.h('section', slots.default?.())
+    },
+  })
+  app.component('el-button', {
+    setup(_, { slots }) {
+      return () => Vue.h('button', slots.default?.())
+    },
+  })
+  app.component('AppIcon', { render: () => null })
+  app.config.warnHandler = () => {}
+  return renderToString(app)
+}
+
 test('Element Plus is registered globally with Chinese locale and a restrained plain theme', () => {
   const packageManifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const main = readFileSync(new URL('./main.js', import.meta.url), 'utf8')
@@ -92,30 +120,18 @@ const renderRecordings = async (overrides = {}) => {
     previewLoading: false,
     previewError: '',
     previewMediaUrl: '/legacy-download',
-    previewPlayback: { activeSlot: 0 },
+    previewPlayback: { activeSlot: 0, gap: false },
     showScheduleDialog: false,
     savingSchedule: false,
     scheduleForm: {},
     weekdays: [],
     selectedDays: [],
     timeSearch: {
-      cameraId: 7,
       startDate: '2026-08-08',
       endDate: '2026-08-08',
-      at: '2026-08-08T10:15',
     },
     dateRange: ['2026-08-08', '2026-08-08'],
     historyError: '',
-    timelineError: '',
-    timePlaybackOpen: true,
-    playbackState: {
-      activeSlot: 0,
-      point: { segment, offset_ms: 0, next_segment_id: null },
-      gap: false,
-      error: '',
-      loading: false,
-      loadingNext: false,
-    },
     loadRecordings() {},
     applyHistoryFilters() {},
     clearDateRange() {},
@@ -147,7 +163,11 @@ const renderRecordings = async (overrides = {}) => {
   }
   const app = Vue.createSSRApp({ setup: () => context, render })
   app.component('AppIcon', { render: () => null })
-  app.component('el-table-column', { render: () => null })
+  app.component('el-table-column', {
+    setup(_, { slots }) {
+      return () => slots.default?.({ row: context.recordings[0] })
+    },
+  })
   app.config.warnHandler = () => {}
   return renderToString(app)
 }
@@ -248,6 +268,42 @@ test('Element Plus owns the live picker trigger and selection control labels', (
   assert.doesNotMatch(live, /toggleCameraSelection/)
   assert.doesNotMatch(cameras, /<label\b[^>]*>(?:(?!<\/label>)[\s\S])*?<el-(?:radio|checkbox)\b/)
   assert.doesNotMatch(live, /<label\b[^>]*>(?:(?!<\/label>)[\s\S])*?<el-checkbox\b/)
+})
+
+test('camera and live controls complete the Element Plus plain migration', () => {
+  const cameras = viewSource('Cameras')
+  const live = viewSource('Live')
+
+  for (const [name, source] of [['camera', cameras], ['live', live]]) {
+    const template = parse(source).descriptor.template.content
+    assert.doesNotMatch(template, /<button\b/, `${name} must not retain native action buttons`)
+    assert.doesNotMatch(template, /<(?:input|select|textarea)\b/, `${name} must not retain native form controls`)
+    assert.doesNotMatch(template, /class="[^"]*\bui-(?:button|icon-button)/, `${name} must not retain custom button styling`)
+    assert.doesNotMatch(template, /<el-button\b(?=[^>]*\stype="button")/, `${name} must use native-type for native button semantics`)
+  }
+
+  assert.match(cameras, /<el-checkbox(?=[^>]*:value="ch\.channel")[^>]*>[\s\S]*?CH\{\{ ch\.channel \}\}[\s\S]*?<\/el-checkbox>/)
+  assert.doesNotMatch(cameras, /<el-checkbox\s+:label="ch\.channel"/)
+  assert.match(live, /<el-radio-group\s+v-model="gridSize"/)
+  assert.match(live, /<el-radio-group\s+v-model="recordFormat"/)
+})
+
+test('camera test-info dialog remains render-safe after its backing object is cleared', async () => {
+  await assert.doesNotReject(renderTemplateFragment(
+    viewSource('Cameras'),
+    '<!-- 测试结果弹窗 -->',
+    '<!-- 局域网扫描弹窗 -->',
+    { testInfoDialogOpen: false, testInfoModal: null, closeTestInfoDialog() {}, clearTestInfoDialog() {} },
+  ))
+})
+
+test('live snapshot dialog remains render-safe after its backing object is cleared', async () => {
+  await assert.doesNotReject(renderTemplateFragment(
+    viewSource('Live'),
+    '<!-- 原生抓拍结果 -->',
+    '</el-dialog>',
+    { snapshotDialogOpen: false, snapshotTarget: null, snapshotURL: '', closeSnapshot() {}, clearSnapshot() {} },
+  ))
 })
 
 test('recordings view preserves recording and schedule actions in a responsive surface', () => {
@@ -352,6 +408,19 @@ test('recordings list preview restores guarded native segment continuation and C
   assert.equal((recordings.match(/compat-flex-gap-3/g) || []).length, 2, 'filter and schedule header must use Chrome 72-compatible spacing')
   assert.doesNotMatch(recordings, /items-end gap-3/)
   assert.doesNotMatch(recordings, /justify-between gap-3/)
+})
+
+test('recordings use valid download links and surface a missing-time preview gap', async () => {
+  const recordings = viewSource('Recordings')
+  assert.doesNotMatch(recordings, /<a\b[^>]*>[\s\S]*?<el-button\b/)
+  assert.match(recordings, /<el-button(?=[^>]*\btag="a")(?=[^>]*:href="downloadUrl\(row\.id\)")[^>]*>/)
+
+  const html = await renderRecordings({
+    previewRec: { id: 18, camera_id: 7, start_time: '2026-08-08T10:10:00Z', storage_mode: 'segmented' },
+    previewOpen: true,
+    previewPlayback: { activeSlot: 0, gap: true },
+  })
+  assert.match(html, /该时间没有录像/)
 })
 
 test('recording history filters use local date boundaries and playback resolves independently', () => {
@@ -598,6 +667,8 @@ test('recording center renders Element Plus history filters without manual playb
   assert.match(html, /至/)
   assert.match(html, /清除日期/)
   assert.match(html, /查询历史/)
+  assert.match(html, /10:00/)
+  assert.match(html, /1000 B/)
   assert.doesNotMatch(html, /播放摄像头/)
   assert.doesNotMatch(html, /播放时间/)
   assert.doesNotMatch(html, /播放所选时间/)

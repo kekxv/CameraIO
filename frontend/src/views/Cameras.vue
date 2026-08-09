@@ -93,19 +93,21 @@
                   {{ deviceTypeLabel(cam.device_type) }}
                 </span>
                 <!-- 编码格式 radio-button 组 -->
-                <div class="ml-auto flex items-center rounded-md border border-slate-200 overflow-hidden flex-shrink-0" title="切换编码格式">
-                  <button
+                <el-radio-group
+                  :model-value="cam.preferred_codec || 'auto'"
+                  size="small"
+                  class="ml-auto flex-shrink-0"
+                  aria-label="切换编码格式"
+                  @change="handleSetCodec(cam, $event)"
+                >
+                  <el-radio-button
                     v-for="opt in ['auto', 'h264', 'h265']"
                     :key="opt"
-                    @click="handleSetCodec(cam, opt)"
-                    class="px-1.5 py-0.5 text-[10px] font-medium transition-colors border-r border-slate-200 last:border-r-0"
-                    :class="(cam.preferred_codec || 'auto') === opt
-                      ? 'bg-primary-600 text-white'
-                      : 'bg-white text-slate-500 hover:bg-slate-50'"
+                    :value="opt"
                   >
                     {{ opt === 'auto' ? '自动' : opt === 'h264' ? 'H.264' : 'H.265' }}
-                  </button>
-                </div>
+                  </el-radio-button>
+                </el-radio-group>
               </div>
               <div v-if="cam.nvr_channel > 0" class="flex items-center gap-1">
                 <span class="text-slate-400 flex-shrink-0">通道:</span>
@@ -147,49 +149,48 @@
         <div class="px-4 py-3 bg-slate-50 border-t border-slate-100 compat-flex-gap-2">
           <!-- RTSP: 同步时间/测试/网络配置 -->
           <template v-if="cam.access_protocol !== 'gb28181'">
-            <button
+            <el-button
+              plain
+              size="small"
+              class="flex-1"
               @click="handleSyncTime(cam)"
               :disabled="syncingId === cam.id"
-              class="flex-1 px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
             >
               <span v-if="syncingId === cam.id">同步中...</span>
               <template v-else>
                 <AppIcon name="clock" class="w-3.5 h-3.5" />
                 <span>同步时间</span>
               </template>
-            </button>
-            <el-tooltip content="测试连接"><button
-              @click="handleTest(cam)"
-              :disabled="testingId === cam.id"
-              class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:opacity-50"
-              title="测试连接"
-            >
-              <span v-if="testingId === cam.id">...</span>
-              <AppIcon v-else name="plug" class="w-3.5 h-3.5" />
-            </button></el-tooltip>
-            <button
-              @click="showNetworkDialog(cam)"
-              class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
-              title="网络配置"
-            >
-              <AppIcon name="globe" class="w-3.5 h-3.5" />
-            </button>
+            </el-button>
+            <el-tooltip content="测试连接">
+              <el-button
+                plain
+                circle
+                size="small"
+                aria-label="测试连接"
+                :loading="testingId === cam.id"
+                @click="handleTest(cam)"
+              >
+                <AppIcon name="plug" class="w-3.5 h-3.5" />
+              </el-button>
+            </el-tooltip>
+            <el-tooltip content="网络配置">
+              <el-button plain circle size="small" aria-label="网络配置" @click="showNetworkDialog(cam)">
+                <AppIcon name="globe" class="w-3.5 h-3.5" />
+              </el-button>
+            </el-tooltip>
           </template>
           <!-- GB28181: 显示注册状态（无同步/测试/网络） -->
-          <button
-            @click="handleEdit(cam)"
-            class="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors"
-            title="编辑"
-          >
-            <AppIcon name="edit" class="w-3.5 h-3.5" />
-          </button>
-          <button
-            @click="handleDelete(cam)"
-            class="px-2 py-1.5 text-xs bg-white border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors"
-            title="删除"
-          >
-            <AppIcon name="trash" class="w-3.5 h-3.5" />
-          </button>
+          <el-tooltip content="编辑">
+            <el-button plain circle size="small" aria-label="编辑" @click="handleEdit(cam)">
+              <AppIcon name="edit" class="w-3.5 h-3.5" />
+            </el-button>
+          </el-tooltip>
+          <el-tooltip content="删除">
+            <el-button plain circle size="small" type="danger" aria-label="删除" @click="handleDelete(cam)">
+              <AppIcon name="trash" class="w-3.5 h-3.5" />
+            </el-button>
+          </el-tooltip>
         </div>
       </el-card>
     </div>
@@ -213,7 +214,7 @@
             <div class="grid grid-cols-3 gap-2">
               <el-radio-group v-model="form.access_protocol" class="grid grid-cols-3 gap-2">
               <el-radio
-                label="rtsp"
+                value="rtsp"
                 class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
                 :class="form.access_protocol === 'rtsp'
                   ? 'border-primary-500 bg-primary-50 text-primary-700'
@@ -225,7 +226,7 @@
                 </div>
               </el-radio>
               <el-radio
-                label="gb28181"
+                value="gb28181"
                 class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
                 :class="form.access_protocol === 'gb28181'
                   ? 'border-primary-500 bg-primary-50 text-primary-700'
@@ -237,7 +238,7 @@
                 </div>
               </el-radio>
               <el-radio
-                label="local"
+                value="local"
                 class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
                 :class="form.access_protocol === 'local'
                   ? 'border-primary-500 bg-primary-50 text-primary-700'
@@ -294,18 +295,16 @@
 
             <!-- 测试连接按钮 -->
             <div v-if="form.ip && (form.username || form.password)" class="flex items-center gap-2">
-              <button
-                type="button"
+              <el-button
+                plain
+                native-type="button"
+                size="small"
                 @click="handleTestByIP"
-                :disabled="testingByIP"
-                class="px-3 py-1.5 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100 transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
+                :loading="testingByIP"
               >
-                <span v-if="testingByIP">测试中...</span>
-                <template v-else>
-                  <AppIcon name="plug" class="w-3.5 h-3.5" />
-                  <span>测试连接</span>
-                </template>
-              </button>
+                <AppIcon name="plug" class="w-3.5 h-3.5" />
+                <span>测试连接</span>
+              </el-button>
               <span v-if="testResult" class="text-xs" :class="testResult.ok ? 'text-emerald-600' : 'text-red-600'">
                 {{ testResult.message }}
               </span>
@@ -341,43 +340,51 @@
           <!-- NVR 通道发现（仅 RTSP，GB28181 用设备/通道编码） -->
           <div v-if="form.access_protocol !== 'gb28181' && (form.device_type === 'nvr' || form.device_type === 'dvr')">
             <div class="flex items-center gap-2 mb-2">
-              <button
-                type="button"
+              <el-button
+                plain
+                native-type="button"
+                size="small"
                 @click="handleDiscoverChannels"
                 :disabled="discovering || !form.ip || !form.username || !form.password"
                 :title="!form.ip || !form.username || !form.password ? '请先填写 IP、用户名和密码' : ''"
-                class="px-3 py-1.5 text-xs bg-purple-50 border border-purple-200 text-purple-700 rounded hover:bg-purple-100 transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
+                :loading="discovering"
               >
-                <span v-if="discovering">扫描中...</span>
-                <template v-else>
-                  <AppIcon name="search" class="w-3.5 h-3.5" />
-                  <span>扫描 NVR 通道</span>
-                </template>
-              </button>
+                <AppIcon name="search" class="w-3.5 h-3.5" />
+                <span>扫描 NVR 通道</span>
+              </el-button>
               <span v-if="discoveredChannels.length > 0" class="text-xs text-slate-500">
                 发现 {{ discoveredChannels.length }} 个通道，已选 {{ selectedChannels.length }} 个
               </span>
             </div>
 
             <!-- 通道列表（多选） -->
-            <el-checkbox-group v-if="discoveredChannels.length > 0" v-model="selectedChannels" class="block border border-slate-200 rounded-md overflow-hidden mb-2 max-h-48 overflow-y-auto">
+            <div v-if="discoveredChannels.length > 0" class="border border-slate-200 rounded-md overflow-hidden mb-2 max-h-48 overflow-y-auto">
               <div class="px-3 py-1.5 bg-slate-50 border-b border-slate-200 text-xs font-medium text-slate-600 flex items-center gap-2">
-                <input type="checkbox" @change="toggleAllChannels" :checked="allChannelsSelected" class="rounded text-primary-600" />
-                <span>全选 ({{ selectedChannels.length }}/{{ discoveredChannels.length }})</span>
+                <el-checkbox
+                  :model-value="allChannelsSelected"
+                  :indeterminate="selectedChannels.length > 0 && !allChannelsSelected"
+                  @change="toggleAllChannels"
+                >
+                  全选 ({{ selectedChannels.length }}/{{ discoveredChannels.length }})
+                </el-checkbox>
               </div>
-              <div
-                v-for="ch in discoveredChannels"
-                :key="ch.channel"
-                class="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 text-xs"
-              >
-                <el-checkbox :label="ch.channel" />
-                <span class="font-mono text-slate-600 w-10">CH{{ ch.channel }}</span>
-                <span class="text-slate-500 truncate flex-1">{{ ch.name || ch.profile_token }}</span>
-                <span v-if="ch.rtsp_url" class="text-[10px] text-emerald-600 font-mono truncate max-w-[140px]" :title="ch.rtsp_url">
-                  {{ ch.rtsp_url.replace(/^rtsp:\/\/[^@]*@/, 'rtsp://***@') }}
-                </span>
-              </div>
-            </el-checkbox-group>
+              <el-checkbox-group v-model="selectedChannels" class="block">
+                <el-checkbox
+                  v-for="ch in discoveredChannels"
+                  :key="ch.channel"
+                  :value="ch.channel"
+                  class="flex w-full items-center px-3 py-1.5 border-b border-slate-100 last:border-b-0 text-xs"
+                >
+                  <span class="flex min-w-0 flex-1 items-center gap-2">
+                    <span class="font-mono text-slate-600 w-10">CH{{ ch.channel }}</span>
+                    <span class="text-slate-500 truncate flex-1">{{ ch.name || ch.profile_token }}</span>
+                    <span v-if="ch.rtsp_url" class="text-[10px] text-emerald-600 font-mono truncate max-w-[140px]" :title="ch.rtsp_url">
+                      {{ ch.rtsp_url.replace(/^rtsp:\/\/[^@]*@/, 'rtsp://***@') }}
+                    </span>
+                  </span>
+                </el-checkbox>
+              </el-checkbox-group>
+            </div>
           </div>
 
           <!-- RTSP 专属字段 -->
@@ -385,27 +392,22 @@
             <!-- 码流选择 -->
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">码流类型</label>
-              <div class="flex rounded-lg border border-slate-300 overflow-hidden">
-                <button
-                  type="button"
+              <el-radio-group v-model="form.stream_type" class="w-full">
+                <el-radio-button
                   v-for="opt in [{v:'main',l:'主码流'},{v:'sub',l:'子码流'}]"
                   :key="opt.v"
-                  @click="form.stream_type = opt.v"
-                  class="flex-1 py-1.5 text-xs font-medium transition-colors border-r border-slate-200 last:border-r-0"
-                  :class="(form.stream_type || 'main') === opt.v ? 'bg-primary-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'"
+                  :value="opt.v"
+                  class="flex-1"
                 >
                   {{ opt.l }}
-                </button>
-              </div>
+                </el-radio-button>
+              </el-radio-group>
               <p class="text-[10px] text-slate-400 mt-1">
                 主码流清晰度高；子码流流畅度高、占用带宽低，适合多路预览
               </p>
             </div>
 
-            <label class="flex items-center gap-2 text-sm">
-              <input v-model="form.auto_tune_enabled" type="checkbox" class="rounded" />
-              <span class="text-slate-700">自动优化编码参数（推荐）</span>
-            </label>
+            <el-checkbox v-model="form.auto_tune_enabled">自动优化编码参数（推荐）</el-checkbox>
           </template>
 
           <!-- GB28181 专属字段 -->
@@ -419,33 +421,26 @@
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">设备编码 (20 位) *</label>
-              <input v-model="form.device_id" type="text" maxlength="20" required
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder="34020000001110000001" />
+              <el-input v-model="form.device_id" maxlength="20" required placeholder="34020000001110000001" />
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">通道编码 (20 位)</label>
-              <input v-model="form.channel_id" type="text" maxlength="20"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder="34020000001320000001" />
+              <el-input v-model="form.channel_id" maxlength="20" placeholder="34020000001320000001" />
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">
                 密码
                 <span class="text-xs text-slate-400 ml-1">国标鉴权密码，需与设备端一致</span>
               </label>
-              <input v-model="form.password" type="password"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder="国标 SIP 鉴权密码" />
+              <el-input v-model="form.password" type="password" show-password placeholder="国标 SIP 鉴权密码" />
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">流传输协议</label>
-              <select v-model="form.transport"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500">
-                <option value="UDP">UDP（推荐，延迟最低）</option>
-                <option value="TCP">TCP</option>
-                <option value="TCP/AUTO">TCP/AUTO（自适应）</option>
-              </select>
+              <el-select v-model="form.transport" class="w-full">
+                <el-option label="UDP（推荐，延迟最低）" value="UDP" />
+                <el-option label="TCP" value="TCP" />
+                <el-option label="TCP/AUTO（自适应）" value="TCP/AUTO" />
+              </el-select>
             </div>
           </template>
 
@@ -458,34 +453,29 @@
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <label class="block text-sm font-medium text-slate-700 mb-1">设备索引</label>
-                <input v-model.number="form.local_index" type="number" min="-1"
-                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  placeholder="0" />
+                <el-input v-model.number="form.local_index" type="number" :min="-1" placeholder="0" />
               </div>
               <div>
                 <label class="block text-sm font-medium text-slate-700 mb-1">设备名称</label>
-                <input v-model="form.local_name" type="text"
-                  class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  placeholder="FaceTime HD Camera" />
+                <el-input v-model="form.local_name" placeholder="FaceTime HD Camera" />
               </div>
             </div>
-            <button
-              type="button"
+            <el-button
+              plain
+              native-type="button"
+              class="w-full"
               @click="scanLocalCameras"
-              :disabled="scanningLocal"
-              class="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+              :loading="scanningLocal"
             >
-              <span v-if="scanningLocal">扫描中...</span>
-              <template v-else>
-                <AppIcon name="search" class="w-4 h-4" />
-                <span>扫描本机摄像头</span>
-              </template>
-            </button>
+              <AppIcon name="search" class="w-4 h-4" />
+              <span>扫描本机摄像头</span>
+            </el-button>
             <div v-if="localCameraList.length > 0" class="border border-slate-200 rounded-md overflow-hidden">
-              <div
+              <el-button
                 v-for="cam in localCameraList"
                 :key="cam.index"
-                class="flex items-center justify-between px-3 py-2 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0"
+                text
+                class="w-full h-auto justify-between rounded-none border-b border-slate-100 px-3 py-2 last:border-b-0"
                 @click="selectLocalCamera(cam)"
               >
                 <div>
@@ -493,53 +483,46 @@
                   <div class="text-xs text-slate-500 font-mono">{{ cam.path }} · 索引 {{ cam.index }}</div>
                 </div>
                 <span class="text-xs text-primary-600">选择 →</span>
-              </div>
+              </el-button>
             </div>
           </template>
 
-          <div v-if="submitError" class="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-            {{ submitError }}
-          </div>
-          <div v-if="submitSuccess" class="text-sm text-emerald-600 bg-emerald-50 border border-emerald-200 rounded px-3 py-2">
-            {{ submitSuccess }}
-          </div>
+          <el-alert v-if="submitError" :title="submitError" type="error" :closable="false" />
+          <el-alert v-if="submitSuccess" :title="submitSuccess" type="success" :closable="false" />
 
           <div class="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
+            <el-button
+              plain
+              native-type="button"
               @click="closeDialog"
-              class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
             >
               取消
-            </button>
+            </el-button>
             <!-- 编辑模式：测试按钮（仅 RTSP） -->
-            <button
+            <el-button
               v-if="editingCamera && editingCamera.access_protocol === 'rtsp'"
-              type="button"
+              plain
+              native-type="button"
               @click="handleTest(editingCamera)"
-              :disabled="testingId === editingCamera.id"
-              class="px-4 py-2 text-sm bg-blue-50 border border-blue-200 text-blue-700 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
+              :loading="testingId === editingCamera.id"
             >
-              <span v-if="testingId === editingCamera.id">测试中...</span>
-              <template v-else>
-                <AppIcon name="plug" class="w-4 h-4" />
-                <span>测试连接</span>
-              </template>
-            </button>
-            <button
-              type="submit"
-              :disabled="submitting"
-              class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md text-sm disabled:opacity-50 transition-colors"
+              <AppIcon name="plug" class="w-4 h-4" />
+              <span>测试连接</span>
+            </el-button>
+            <el-button
+              type="primary"
+              native-type="submit"
+              :loading="submitting"
             >
-              {{ submitting ? '保存中...' : '保存' }}
-            </button>
+              保存
+            </el-button>
           </div>
         </el-form>
     </el-dialog>
 
     <!-- 测试结果弹窗 -->
-    <el-dialog :model-value="Boolean(testInfoModal)" title="设备信息" width="420px" @close="testInfoModal = null">
-        <div class="space-y-2 text-sm">
+    <el-dialog v-model="testInfoDialogOpen" title="设备信息" width="420px" @closed="clearTestInfoDialog">
+        <div v-if="testInfoModal" class="space-y-2 text-sm">
           <div v-if="testInfoModal.manufacturer"><span class="text-slate-400">厂商:</span> {{ testInfoModal.manufacturer }}</div>
           <div v-if="testInfoModal.model"><span class="text-slate-400">型号:</span> {{ testInfoModal.model }}</div>
           <div v-if="testInfoModal.firmware_version"><span class="text-slate-400">固件:</span> {{ testInfoModal.firmware_version }}</div>
@@ -552,7 +535,7 @@
           </div>
         </div>
         <div class="mt-4 flex justify-end">
-          <button @click="testInfoModal = null" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-md">关闭</button>
+          <el-button plain @click="closeTestInfoDialog">关闭</el-button>
         </div>
     </el-dialog>
 
@@ -568,80 +551,84 @@
 
         <!-- 扫描结果 -->
         <div v-else>
-          <div v-if="scanError" class="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-3">
-            {{ scanError }}
-          </div>
+          <el-alert v-if="scanError" :title="scanError" type="error" :closable="false" class="mb-3" />
 
           <div v-if="scannedDevices.length > 0" class="border border-slate-200 rounded-md overflow-hidden">
             <!-- 全选 -->
             <div class="px-3 py-2 bg-slate-50 border-b border-slate-200 text-xs font-medium text-slate-600 flex items-center gap-2">
-              <input type="checkbox" @change="toggleAllDevices" :checked="allDevicesSelected" class="rounded text-primary-600" />
-              <span>全选 ({{ selectedDevices.length }}/{{ scannedDevices.length }})</span>
+              <el-checkbox
+                :model-value="allDevicesSelected"
+                :indeterminate="selectedDevices.length > 0 && !allDevicesSelected"
+                @change="toggleAllDevices"
+              >
+                全选 ({{ selectedDevices.length }}/{{ scannedDevices.length }})
+              </el-checkbox>
               <span class="ml-auto text-slate-400">支持品牌: 海康威视 · 宇视 · 通用 ONVIF</span>
             </div>
 
             <!-- 设备列表 -->
-            <label
-              v-for="dev in scannedDevices"
-              :key="dev.ip"
-              class="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0"
-            >
-              <input
-                type="checkbox"
+            <el-checkbox-group v-model="selectedDevices" class="block">
+              <el-checkbox
+                v-for="dev in scannedDevices"
+                :key="dev.ip"
                 :value="dev.ip"
-                v-model="selectedDevices"
-                class="rounded text-primary-600"
-              />
-              <!-- 品牌颜色标记 -->
-              <span
-                class="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                :class="dev.brand === 'hikvision' ? 'bg-red-500' : dev.brand === 'uniview' ? 'bg-blue-500' : 'bg-slate-300'"
-              ></span>
-              <!-- 设备信息 -->
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                  <span class="font-mono text-sm font-medium text-slate-800">{{ dev.ip }}</span>
-                  <span class="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-medium">
-                    {{ brandLabel(dev.brand) }}
+                class="flex w-full items-center px-3 py-2.5 border-b border-slate-100 last:border-b-0"
+              >
+                <span class="flex min-w-0 flex-1 items-center gap-3">
+                  <!-- 品牌颜色标记 -->
+                  <span
+                    class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                    :class="dev.brand === 'hikvision' ? 'bg-red-500' : dev.brand === 'uniview' ? 'bg-blue-500' : 'bg-slate-300'"
+                  ></span>
+                  <!-- 设备信息 -->
+                  <span class="flex-1 min-w-0">
+                    <span class="flex items-center gap-2">
+                      <span class="font-mono text-sm font-medium text-slate-800">{{ dev.ip }}</span>
+                      <span class="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-medium">
+                        {{ brandLabel(dev.brand) }}
+                      </span>
+                      <span v-if="dev.device_type" class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                        :class="dev.device_type === 'nvr' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'">
+                        {{ deviceTypeLabel(dev.device_type) }}
+                      </span>
+                    </span>
+                    <span class="block text-xs text-slate-500 mt-0.5">
+                      <span v-if="dev.manufacturer">{{ dev.manufacturer }}</span>
+                      <span v-if="dev.model"> · {{ dev.model }}</span>
+                      <span v-if="dev.channels > 0"> · {{ dev.channels }} 通道</span>
+                      <span v-if="dev.rtsp_enabled"> · RTSP 已启用</span>
+                    </span>
                   </span>
-                  <span v-if="dev.device_type" class="px-1.5 py-0.5 rounded text-[10px] font-medium"
-                    :class="dev.device_type === 'nvr' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'">
-                    {{ deviceTypeLabel(dev.device_type) }}
-                  </span>
-                </div>
-                <div class="text-xs text-slate-500 mt-0.5">
-                  <span v-if="dev.manufacturer">{{ dev.manufacturer }}</span>
-                  <span v-if="dev.model"> · {{ dev.model }}</span>
-                  <span v-if="dev.channels > 0"> · {{ dev.channels }} 通道</span>
-                  <span v-if="dev.rtsp_enabled"> · RTSP 已启用</span>
-                </div>
-              </div>
-            </label>
+                </span>
+              </el-checkbox>
+            </el-checkbox-group>
           </div>
 
           <!-- 底部操作 -->
           <div class="flex items-center justify-between mt-4">
-            <button
+            <el-button
+              plain
+              size="small"
               @click="handleScanLAN"
-              class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md transition-colors inline-flex items-center gap-1.5"
             >
               <AppIcon name="refresh" class="w-3.5 h-3.5" />
               <span>重新扫描</span>
-            </button>
+            </el-button>
             <div class="flex gap-2">
-              <button
+              <el-button
+                plain
                 @click="showScanDialog = false"
-                class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
               >
                 取消
-              </button>
-              <button
+              </el-button>
+              <el-button
+                type="primary"
                 @click="handleBatchAdd"
-                :disabled="selectedDevices.length === 0 || submitting"
-                class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md text-sm disabled:opacity-50 transition-colors"
+                :disabled="selectedDevices.length === 0"
+                :loading="submitting"
               >
-                {{ submitting ? '添加中...' : `添加 ${selectedDevices.length} 个设备` }}
-              </button>
+                添加 {{ selectedDevices.length }} 个设备
+              </el-button>
             </div>
           </div>
 
@@ -657,29 +644,20 @@
         <p class="text-xs text-slate-500 mb-3">修改 {{ networkConfigCamera?.name }} 的 IP 地址。修改后设备会重启，需使用新 IP 重新连接。</p>
 
         <div class="space-y-3">
-          <label class="flex items-center gap-2 text-sm">
-            <input v-model="networkForm.dhcp" type="checkbox" class="rounded" />
-            <span class="text-slate-700">使用 DHCP 自动获取 IP</span>
-          </label>
+          <el-checkbox v-model="networkForm.dhcp">使用 DHCP 自动获取 IP</el-checkbox>
 
           <div v-if="!networkForm.dhcp" class="space-y-2">
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">IP 地址</label>
-              <input v-model="networkForm.ip" type="text"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder="192.168.1.100" />
+              <el-input v-model="networkForm.ip" placeholder="192.168.1.100" />
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">子网掩码</label>
-              <input v-model="networkForm.mask" type="text"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder="255.255.255.0" />
+              <el-input v-model="networkForm.mask" placeholder="255.255.255.0" />
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">网关</label>
-              <input v-model="networkForm.gateway" type="text"
-                class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder="192.168.1.1（留空自动推断）" />
+              <el-input v-model="networkForm.gateway" placeholder="192.168.1.1（留空自动推断）" />
             </div>
           </div>
 
@@ -690,11 +668,8 @@
         </div>
 
         <div class="flex justify-end gap-2 mt-4">
-          <button @click="showNetworkConfigDialog = false" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-md">取消</button>
-          <button @click="handleSubmitNetwork" :disabled="settingNetwork"
-            class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md text-sm disabled:opacity-50">
-            {{ settingNetwork ? '设置中...' : '应用' }}
-          </button>
+          <el-button plain @click="showNetworkConfigDialog = false">取消</el-button>
+          <el-button type="primary" :loading="settingNetwork" @click="handleSubmitNetwork">应用</el-button>
         </div>
     </el-dialog>
   </div>
@@ -724,6 +699,7 @@ const testingId = ref(null)
 const testingByIP = ref(false)
 const testResult = ref(null)
 const testInfoModal = ref(null)
+const testInfoDialogOpen = ref(false)
 const submitting = ref(false)
 const submitError = ref('')
 const submitSuccess = ref('')
@@ -748,8 +724,8 @@ const allChannelsSelected = computed(() =>
   selectedChannels.value.length === discoveredChannels.value.length
 )
 
-const toggleAllChannels = (e) => {
-  if (e.target.checked) {
+const toggleAllChannels = (checked) => {
+  if (checked) {
     selectedChannels.value = discoveredChannels.value.map(ch => ch.channel)
   } else {
     selectedChannels.value = []
@@ -848,8 +824,8 @@ const allDevicesSelected = computed(() =>
   selectedDevices.value.length === scannedDevices.value.length
 )
 
-const toggleAllDevices = (e) => {
-  if (e.target.checked) {
+const toggleAllDevices = (checked) => {
+  if (checked) {
     selectedDevices.value = scannedDevices.value.map(d => d.ip)
   } else {
     selectedDevices.value = []
@@ -906,6 +882,7 @@ const handleTestByIP = async () => {
     const label = info.manufacturer ? `${info.manufacturer} ${info.model}` : '连接成功'
     testResult.value = { ok: true, message: label + (info.permission_note ? '（权限受限）' : '') }
     testInfoModal.value = info
+    testInfoDialogOpen.value = true
   } catch (err) {
     testResult.value = { ok: false, message: '连接失败: ' + (err.response?.data?.message || err.message) }
   } finally {
@@ -919,6 +896,7 @@ const handleTest = async (cam) => {
   try {
     const info = await testCameraConnection(cam.id)
     testInfoModal.value = info
+    testInfoDialogOpen.value = true
     const label = info.manufacturer ? `${info.manufacturer} ${info.model}` : '设备'
     alert(`${label} 连接成功` + (info.permission_note ? '\n注意：' + info.permission_note : ''))
   } catch (err) {
@@ -926,6 +904,14 @@ const handleTest = async (cam) => {
   } finally {
     testingId.value = null
   }
+}
+
+const closeTestInfoDialog = () => {
+  testInfoDialogOpen.value = false
+}
+
+const clearTestInfoDialog = () => {
+  testInfoModal.value = null
 }
 
 // 扫描 NVR 通道

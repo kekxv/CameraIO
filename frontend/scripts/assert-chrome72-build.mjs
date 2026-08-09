@@ -8,6 +8,15 @@ const assetNames = readdirSync(assetsDir)
 const scripts = assetNames.filter((name) => name.endsWith('.js'))
 const styles = assetNames.filter((name) => name.endsWith('.css'))
 
+const runtimeName = assetNames.find((name) => /^polyfills-.*\.js$/.test(name))
+if (!runtimeName) {
+  throw new Error('production build is missing its Chrome 72 runtime chunk')
+}
+const indexHTML = readFileSync(new URL('../dist/index.html', import.meta.url), 'utf8')
+if (indexHTML.indexOf(runtimeName) >= indexHTML.search(/assets\/index-.*\.js/)) {
+  throw new Error('Chrome 72 runtime must load before the application entry')
+}
+
 const findUnsupportedSyntax = (node) => {
   if (!node || typeof node !== 'object') return null
   if (node.type === 'ChainExpression') return '?.'
@@ -67,5 +76,21 @@ cssRoot.walkDecls('pointer-events', (declaration) => {
     throw new Error(`${declaration.parent.selector} disables an Element Plus interactive hit area`)
   }
 })
+
+const nativeAllSettled = Object.getOwnPropertyDescriptor(Promise, 'allSettled')
+delete Promise.allSettled
+await import(new URL(runtimeName, assetsDir))
+if (typeof Promise.allSettled !== 'function') {
+  throw new Error('Chrome 72 runtime does not install Promise.allSettled')
+}
+const settled = await Promise.allSettled([
+  Promise.resolve('ok'),
+  Promise.reject(new Error('expected rejection')),
+])
+if (settled[0]?.status !== 'fulfilled' || settled[0]?.value !== 'ok'
+  || settled[1]?.status !== 'rejected' || settled[1]?.reason?.message !== 'expected rejection') {
+  throw new Error('Chrome 72 Promise.allSettled runtime has incorrect settlement behavior')
+}
+if (nativeAllSettled) Object.defineProperty(Promise, 'allSettled', nativeAllSettled)
 
 console.log('Chrome 72 compatibility check passed')

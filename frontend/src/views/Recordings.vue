@@ -31,7 +31,26 @@
             <el-table-column label="大小" width="100"><template #default="{ row = {} }">{{ formatSize(row.file_size) }}</template></el-table-column>
             <el-table-column label="来源" width="90"><template #default="{ row = {} }"><el-tag effect="plain" size="small">{{ triggerLabel(row.trigger_type) }}</el-tag></template></el-table-column>
             <el-table-column label="状态" width="100"><template #default="{ row = {} }"><el-tag :type="statusType(row.status)" effect="plain" size="small">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="150" align="right"><template #default="{ row = {} }"><div class="compat-flex-gap-1 justify-end"><el-button v-if="row.status === 'completed'" text type="primary" @click="openRecordingPreview(row)">预览</el-button><a v-if="row.status === 'completed' && !isSegmentedRecording(row)" :href="downloadUrl(row.id)" :download="`recording_${row.id}.${row.format || 'mp4'}`"><el-button text type="primary">下载</el-button></a><el-button v-else-if="row.status === 'completed'" text disabled>导出</el-button><el-button v-if="row.status === 'recording'" text type="danger" @click="handleStopRecording(row)">停止</el-button><el-button text type="danger" @click="handleDeleteRecording(row)">删除</el-button></div></template></el-table-column>
+            <el-table-column label="操作" width="150" align="right">
+              <template #default="{ row = {} }">
+                <div class="compat-flex-gap-1 justify-end">
+                  <el-button v-if="row.status === 'completed'" text type="primary" @click="openRecordingPreview(row)">预览</el-button>
+                  <el-button
+                    v-if="row.status === 'completed' && !isSegmentedRecording(row)"
+                    tag="a"
+                    :href="downloadUrl(row.id)"
+                    :download="`recording_${row.id}.${row.format || 'mp4'}`"
+                    text
+                    type="primary"
+                  >
+                    下载
+                  </el-button>
+                  <el-button v-else-if="row.status === 'completed'" text disabled>导出</el-button>
+                  <el-button v-if="row.status === 'recording'" text type="danger" @click="handleStopRecording(row)">停止</el-button>
+                  <el-button text type="danger" @click="handleDeleteRecording(row)">删除</el-button>
+                </div>
+              </template>
+            </el-table-column>
           </el-table>
           <div v-if="totalPages > 1" class="flex justify-end pt-4"><el-pagination v-model:current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next" @current-change="goPage" /></div>
         </el-card>
@@ -75,12 +94,24 @@
           @ended="handlePreviewEnded(1)"
         ></video>
         <div v-if="previewLoading" class="absolute inset-0 flex items-center justify-center text-sm text-white bg-black/70">正在加载录像...</div>
+        <div v-else-if="previewPlayback.gap" class="absolute inset-0 flex items-center justify-center text-sm text-white bg-black/70">该时间没有录像</div>
       </div>
-      <template #footer><a v-if="previewRec && !isSegmentedRecording(previewRec)" :href="downloadUrl(previewRec.id)" :download="`recording_${previewRec.id}.${previewRec.format || 'mp4'}`"><el-button type="primary">下载</el-button></a><el-button plain @click="previewOpen = false">关闭</el-button></template>
+      <template #footer>
+        <el-button
+          v-if="previewRec && !isSegmentedRecording(previewRec)"
+          tag="a"
+          :href="downloadUrl(previewRec.id)"
+          :download="`recording_${previewRec.id}.${previewRec.format || 'mp4'}`"
+          type="primary"
+        >
+          下载
+        </el-button>
+        <el-button plain @click="previewOpen = false">关闭</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="showScheduleDialog" :title="scheduleForm.id ? '编辑计划' : '新建计划'" width="520px">
-      <el-form label-position="top" @submit.prevent="saveSchedule"><el-form-item label="名称"><el-input v-model="scheduleForm.name" placeholder="白天录像" /></el-form-item><el-form-item label="摄像头"><el-select v-model="scheduleForm.camera_id" class="w-full"><el-option v-for="cam in cameras" :key="cam.id" :label="`${cam.name} (${cam.ip})`" :value="cam.id" /></el-select></el-form-item><div class="grid grid-cols-2 gap-3"><el-form-item label="开始时间"><el-time-picker v-model="scheduleForm.start_time" value-format="HH:mm" format="HH:mm" class="w-full" /></el-form-item><el-form-item label="结束时间"><el-time-picker v-model="scheduleForm.end_time" value-format="HH:mm" format="HH:mm" class="w-full" /></el-form-item></div><el-form-item label="重复星期"><el-checkbox-group v-model="selectedDays"><el-checkbox-button v-for="(d, i) in weekdays" :key="d.name" :label="i">{{ d.short }}</el-checkbox-button></el-checkbox-group></el-form-item><div class="grid grid-cols-2 gap-3"><el-form-item label="格式"><el-select v-model="scheduleForm.format"><el-option label="MP4" value="mp4" /><el-option label="TS" value="ts" /></el-select></el-form-item><el-form-item label="音频" class="flex items-center"><el-checkbox v-model="scheduleForm.with_audio">包含音频</el-checkbox></el-form-item></div></el-form>
+      <el-form label-position="top" @submit.prevent="saveSchedule"><el-form-item label="名称"><el-input v-model="scheduleForm.name" placeholder="白天录像" /></el-form-item><el-form-item label="摄像头"><el-select v-model="scheduleForm.camera_id" class="w-full"><el-option v-for="cam in cameras" :key="cam.id" :label="`${cam.name} (${cam.ip})`" :value="cam.id" /></el-select></el-form-item><div class="grid grid-cols-2 gap-3"><el-form-item label="开始时间"><el-time-picker v-model="scheduleForm.start_time" value-format="HH:mm" format="HH:mm" class="w-full" /></el-form-item><el-form-item label="结束时间"><el-time-picker v-model="scheduleForm.end_time" value-format="HH:mm" format="HH:mm" class="w-full" /></el-form-item></div><el-form-item label="重复星期"><el-checkbox-group v-model="selectedDays"><el-checkbox-button v-for="(d, i) in weekdays" :key="d.name" :value="i">{{ d.short }}</el-checkbox-button></el-checkbox-group></el-form-item><div class="grid grid-cols-2 gap-3"><el-form-item label="格式"><el-select v-model="scheduleForm.format"><el-option label="MP4" value="mp4" /><el-option label="TS" value="ts" /></el-select></el-form-item><el-form-item label="音频" class="flex items-center"><el-checkbox v-model="scheduleForm.with_audio">包含音频</el-checkbox></el-form-item></div></el-form>
       <template #footer><el-button plain @click="showScheduleDialog = false">取消</el-button><el-button type="primary" :loading="savingSchedule" @click="saveSchedule">保存</el-button></template>
     </el-dialog>
   </div>

@@ -40,7 +40,7 @@ export default defineConfig({
     vue(),
     legacy({
       targets: ['Chrome >= 72'],
-      modernPolyfills: ['es.object.from-entries', 'es.array.flat'],
+      modernPolyfills: ['es.promise.all-settled', 'es.object.from-entries', 'es.array.flat'],
       renderLegacyChunks: false,
     }),
   ],

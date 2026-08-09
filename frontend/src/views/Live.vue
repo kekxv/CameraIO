@@ -22,8 +22,8 @@
         <el-popover v-model:visible="showCameraPicker" trigger="click" placement="bottom-end" width="288">
           <template #reference>
           <el-button
-            type="button"
             plain
+            native-type="button"
             :aria-expanded="showCameraPicker"
             aria-controls="live-camera-picker"
           >
@@ -38,9 +38,9 @@
           >
             <div class="flex items-center justify-between mb-2">
               <span class="text-sm font-semibold text-slate-800">显示的摄像头</span>
-              <button type="button" class="ui-icon-button" aria-label="关闭摄像头选择" @click="showCameraPicker = false">
+              <el-button text circle native-type="button" aria-label="关闭摄像头选择" @click="showCameraPicker = false">
                 <AppIcon name="close" class="w-4 h-4" />
-              </button>
+              </el-button>
             </div>
             <el-checkbox-group v-model="pickerSelectedCameraIDs" class="block max-h-56 overflow-y-auto border-y border-slate-100 py-1">
               <div
@@ -48,7 +48,7 @@
                 :key="cam.id"
                 class="flex items-center px-2 py-2 rounded-md cursor-pointer hover:bg-slate-50"
               >
-                <el-checkbox :label="cam.id" class="min-w-0 flex-1">
+                <el-checkbox :value="cam.id" class="min-w-0 flex-1">
                   <span class="block text-sm text-slate-700 truncate">{{ cam.name }}</span>
                   <span class="block text-xs text-slate-400 truncate">{{ cam.ip }}</span>
                 </el-checkbox>
@@ -56,29 +56,29 @@
               </div>
             </el-checkbox-group>
             <div class="compat-flex-gap-2 justify-between mt-3">
-              <button type="button" class="ui-button-secondary" @click="clearCameraSelection">清空</button>
-              <button type="button" class="ui-button-primary" @click="selectAllCameras">全部显示</button>
+              <el-button plain native-type="button" @click="clearCameraSelection">清空</el-button>
+              <el-button type="primary" native-type="button" @click="selectAllCameras">全部显示</el-button>
             </div>
           </div>
         </el-popover>
         <!-- 网格切换 -->
-        <div class="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
-          <button
+        <el-radio-group v-model="gridSize" size="small" aria-label="预览网格">
+          <el-radio-button
             v-for="n in [1, 4, 9, 16]"
             :key="n"
-            @click="gridSize = n"
-            class="px-2.5 py-1 rounded-md text-xs font-medium transition-all"
-            :class="gridSize === n ? 'bg-white text-primary-700' : 'text-slate-500 hover:text-slate-700'"
+            :value="n"
           >
             {{ gridLabel(n) }}
-          </button>
-        </div>
+          </el-radio-button>
+        </el-radio-group>
         <!-- 全屏切换 -->
-        <el-tooltip content="全屏 (F)"><button @click="toggleFullscreen" class="ui-icon-button" aria-label="切换全屏">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5m-7 14H4m0 0v-4m0 4l5-5m7 5h4m0 0v-4m0 4l-5-5" />
-          </svg>
-        </button></el-tooltip>
+        <el-tooltip content="全屏 (F)">
+          <el-button plain circle aria-label="切换全屏" @click="toggleFullscreen">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5m-7 14H4m0 0v-4m0 4l5-5m7 5h4m0 0v-4m0 4l-5-5" />
+            </svg>
+          </el-button>
+        </el-tooltip>
       </div>
       </div>
     </el-card>
@@ -118,12 +118,9 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
-                <button
-                  @click="startStreamFor(cam.id)"
-                  class="ui-button-primary"
-                >
+                <el-button type="primary" @click="startStreamFor(cam.id)">
                   开始预览
-                </button>
+                </el-button>
               </div>
               <div v-else class="flex flex-col items-center gap-2 text-slate-400">
                 <div class="w-12 h-12 rounded-full bg-white border border-slate-200 flex items-center justify-center">
@@ -164,39 +161,44 @@
               <span class="text-[10px] text-white/60 font-mono">{{ cam.ip }}</span>
             </div>
             <div class="flex items-center gap-0.5">
-              <button
+              <el-button
                 v-if="streaming[cam.id]"
+                text
+                circle
+                size="small"
                 @click="stopStreamFor(cam.id)"
-                class="p-1 rounded-md text-slate-300 hover:text-white hover:bg-white/15 transition-colors"
-                title="停止预览"
+                class="live-media-action"
                 aria-label="停止预览"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                   <rect x="4" y="4" width="12" height="12" rx="1.5" />
                 </svg>
-              </button>
-              <button
+              </el-button>
+              <el-button
+                text
+                circle
+                size="small"
                 @click="takeSnapshot(cam)"
-                :disabled="capturing[cam.id]"
-                class="p-1 rounded-md text-slate-300 hover:text-white hover:bg-white/15 transition-colors disabled:opacity-50"
-                :title="capturing[cam.id] ? '抓拍中...' : '原生抓拍'"
+                :loading="capturing[cam.id]"
+                class="live-media-action"
                 :aria-label="capturing[cam.id] ? '抓拍中' : '原生抓拍'"
               >
-                <span v-if="capturing[cam.id]" class="block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-                <AppIcon v-else name="camera" class="w-3.5 h-3.5" />
-              </button>
-              <button
+                <AppIcon name="camera" class="w-3.5 h-3.5" />
+              </el-button>
+              <el-button
+                text
+                circle
+                size="small"
                 @click="toggleRecord(cam)"
-                :disabled="recording[cam.id] === 'toggling'"
-                class="p-1 rounded-md transition-colors"
+                :loading="recording[cam.id] === 'toggling'"
+                class="live-media-action"
                 :class="recording[cam.id] === 'active' ? 'text-red-400 bg-red-500/20' : 'text-slate-300 hover:text-white hover:bg-white/15'"
-                :title="recording[cam.id] === 'active' ? '停止录像' : '开始录像'"
                 :aria-label="recording[cam.id] === 'active' ? '停止录像' : '开始录像'"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                   <circle cx="10" cy="10" r="6" />
                 </svg>
-              </button>
+              </el-button>
             </div>
           </div>
         </div>
@@ -214,17 +216,16 @@
           <!-- 格式选择 -->
           <div class="mb-3">
             <label class="block text-xs font-medium text-slate-600 mb-1.5">录像格式</label>
-            <div class="flex rounded-lg border border-slate-200 overflow-hidden">
-              <button
+            <el-radio-group v-model="recordFormat" class="w-full">
+              <el-radio-button
                 v-for="fmt in [{v:'mp4',l:'MP4'},{v:'ts',l:'TS'}]"
                 :key="fmt.v"
-                @click="recordFormat = fmt.v"
-                class="flex-1 py-1.5 text-xs font-medium transition-colors border-r border-slate-200 last:border-r-0"
-                :class="recordFormat === fmt.v ? 'bg-primary-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'"
+                :value="fmt.v"
+                class="flex-1"
               >
                 {{ fmt.l }}
-              </button>
-            </div>
+              </el-radio-button>
+            </el-radio-group>
             <p class="text-[10px] text-slate-400 mt-1">
               {{ recordFormat === 'mp4' ? '分段 MP4 流拷贝，推荐' : 'TS 流拷贝' }}
             </p>
@@ -239,33 +240,30 @@
           </div>
 
           <!-- 音频开关 -->
-          <label class="flex items-center gap-2 mb-4 cursor-pointer">
-            <input v-model="recordWithAudio" type="checkbox" class="rounded text-primary-600" />
-            <span class="text-xs text-slate-700">包含音频</span>
-          </label>
+          <el-checkbox v-model="recordWithAudio" class="mb-4">包含音频</el-checkbox>
 
           <!-- 操作按钮 -->
           <div class="compat-flex-gap-2 justify-end">
-            <button @click="showRecordDialog = false" class="ui-button-secondary">取消</button>
-            <button @click="confirmStartRecording" class="ui-button-danger compat-flex-gap-1">
+            <el-button plain @click="showRecordDialog = false">取消</el-button>
+            <el-button type="danger" @click="confirmStartRecording">
               <AppIcon name="record" class="w-3.5 h-3.5" />
               <span>开始录像</span>
-            </button>
+            </el-button>
           </div>
     </el-dialog>
 
     <!-- 原生抓拍结果 -->
-    <el-dialog :model-value="Boolean(snapshotTarget && snapshotURL)" title="原生抓拍" width="900px" @close="closeSnapshot">
-          <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+    <el-dialog v-model="snapshotDialogOpen" title="原生抓拍" width="900px" @closed="clearSnapshot">
+          <div v-if="snapshotTarget" class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
             <div>
               <h3 class="text-sm font-semibold text-slate-800">原生抓拍</h3>
               <p class="text-xs text-slate-500 mt-0.5">{{ snapshotTarget.name }} · {{ snapshotTarget.ip }}</p>
             </div>
-            <button @click="closeSnapshot" class="ui-icon-button" title="关闭" aria-label="关闭">
+            <el-button text circle aria-label="关闭" @click="closeSnapshot">
               <AppIcon name="close" class="w-4 h-4" />
-            </button>
+            </el-button>
           </div>
-          <div class="min-h-0 p-4 bg-slate-100 flex items-center justify-center">
+          <div v-if="snapshotTarget" class="min-h-0 p-4 bg-slate-100 flex items-center justify-center">
             <img :src="snapshotURL" :alt="`${snapshotTarget.name} 抓拍`" class="max-w-full max-h-[70vh] object-contain rounded" />
           </div>
     </el-dialog>
@@ -289,6 +287,7 @@ const recordingIdMap = ref({})
 const capturing = ref({})
 const snapshotTarget = ref(null)
 const snapshotURL = ref('')
+const snapshotDialogOpen = ref(false)
 const showRecordDialog = ref(false)
 const recordTarget = ref(null)
 const recordFormat = ref('mp4')
@@ -395,19 +394,24 @@ const handleStreamError = (cameraId) => {
   streaming.value[cameraId] = false
 }
 
-const closeSnapshot = () => {
+const clearSnapshot = () => {
   if (snapshotURL.value) URL.revokeObjectURL(snapshotURL.value)
   snapshotURL.value = ''
   snapshotTarget.value = null
+}
+
+const closeSnapshot = () => {
+  snapshotDialogOpen.value = false
 }
 
 const takeSnapshot = async (cam) => {
   capturing.value[cam.id] = true
   try {
     const jpeg = await captureSnapshot(cam.id)
-    closeSnapshot()
+    clearSnapshot()
     snapshotURL.value = URL.createObjectURL(jpeg)
     snapshotTarget.value = cam
+    snapshotDialogOpen.value = true
   } catch (err) {
     alert('抓拍失败: ' + await getAPIErrorMessage(err))
   } finally {
@@ -510,7 +514,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   if (clockTimer) clearInterval(clockTimer)
   if (eventWs) eventWs.close()
-  closeSnapshot()
+  clearSnapshot()
   // 离开页面时自动停止所有预览
   stopAllStreams()
 })
