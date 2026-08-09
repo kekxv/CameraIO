@@ -5,6 +5,7 @@ import postcss from 'postcss'
 import flexGapPolyfill from 'flex-gap-polyfill'
 
 const inheritedFlexGapSelectors = [
+  '.el-collapse-item__header',
   '.el-cascader--large .el-cascader__tags',
   '.el-cascader--small .el-cascader__tags',
   '.el-collapse-icon-position-left .el-collapse-item__header',
@@ -24,7 +25,12 @@ const elementPlusFlexGapFallback = () => ({
     const result = await postcss([
       flexGapPolyfill({ only: inheritedFlexGapSelectors }),
     ]).process(source, { from: id })
-    return { code: result.css, map: null }
+    result.root.walkDecls('pointer-events', (declaration) => {
+      if (/^var\(--(?:parent-)?has-fgp\) (?:none|auto)$/.test(declaration.value)) {
+        declaration.remove()
+      }
+    })
+    return { code: result.root.toString(), map: null }
   },
 })
 

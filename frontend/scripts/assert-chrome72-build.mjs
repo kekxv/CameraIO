@@ -42,7 +42,8 @@ if (!/@supports not\s*\(aspect-ratio\s*:\s*1\s*\/\s*1\)/.test(css)) {
 }
 
 let elementFlexGapCount = 0
-parseCSS(css).walkDecls(/^(gap|row-gap|column-gap)$/, (declaration) => {
+const cssRoot = parseCSS(css)
+cssRoot.walkDecls(/^(gap|row-gap|column-gap)$/, (declaration) => {
   if (!declaration.parent.selector?.includes('.el-')) return
   elementFlexGapCount += 1
   if (!/--fgp-(?:gap|row-gap|column-gap)/.test(declaration.value)) {
@@ -52,5 +53,19 @@ parseCSS(css).walkDecls(/^(gap|row-gap|column-gap)$/, (declaration) => {
 if (elementFlexGapCount > 0 && (!css.includes('--fgp-parent-gap-row') || !css.includes('margin-top:var(--fgp-margin-top'))) {
   throw new Error('compiled Element Plus CSS is missing the Chrome 72 flex-gap fallback')
 }
+
+const collapseHeaderRules = cssRoot.nodes
+  .filter((node) => node.type === 'rule' && node.selector === '.el-collapse-item__header')
+const collapseFallbackActive = collapseHeaderRules.some((rule) => rule.nodes
+  .some((node) => node.type === 'decl' && node.prop === '--has-fgp' && node.value.trim() === ''))
+if (!collapseFallbackActive) {
+  throw new Error('compiled collapse header CSS does not activate its Chrome 72 flex-gap fallback')
+}
+
+cssRoot.walkDecls('pointer-events', (declaration) => {
+  if (/^var\(--(?:parent-)?has-fgp\) (?:none|auto)$/.test(declaration.value)) {
+    throw new Error(`${declaration.parent.selector} disables an Element Plus interactive hit area`)
+  }
+})
 
 console.log('Chrome 72 compatibility check passed')

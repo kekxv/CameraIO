@@ -9,6 +9,12 @@ const readBuiltCSS = () => readdirSync('dist/assets')
   .map((name) => readFileSync(`dist/assets/${name}`, 'utf8'))
   .join('\n')
 
+const rulesFor = (root, selector) => root.nodes
+  .filter((node) => node.type === 'rule' && node.selector === selector)
+
+const hasDeclaration = (rules, prop, value) => rules.some((rule) => rule.nodes
+  .some((node) => node.type === 'decl' && node.prop === prop && (value === undefined || node.value === value)))
+
 test('production bundle satisfies the Chrome 72 compatibility contract', () => {
   execFileSync('npm', ['run', 'build'], { stdio: 'inherit' })
   const result = execFileSync('node', ['scripts/assert-chrome72-build.mjs'], { encoding: 'utf8' })
@@ -34,4 +40,37 @@ test('Element Plus flex layouts include generated spacing fallbacks for Chrome 7
   assert.match(readBuiltCSS(), /--fgp-parent-gap-row/)
   assert.match(readBuiltCSS(), /margin-top:var\(--fgp-margin-top/)
   assert.match(readBuiltCSS(), /margin-left:var\(--fgp-margin-left/)
+})
+
+test('collapse headers activate their inherited flex-gap fallback in Chrome 72', () => {
+  execFileSync('npm', ['run', 'build'], { stdio: 'inherit' })
+  const root = parse(readBuiltCSS())
+  const baseHeaderRules = rulesFor(root, '.el-collapse-item__header')
+  const leftHeaderRules = rulesFor(root, '.el-collapse-icon-position-left .el-collapse-item__header')
+
+  assert.ok(
+    baseHeaderRules.some((rule) => rule.nodes
+      .some((node) => node.type === 'decl' && node.prop === '--has-fgp' && node.value.trim() === '')),
+    'the collapse header flex container must activate its generated fallback',
+  )
+  assert.ok(
+    hasDeclaration(leftHeaderRules, 'gap')
+      && hasDeclaration(leftHeaderRules, '--fgp-gap-row', '8px')
+      && hasDeclaration(leftHeaderRules, '--fgp-gap-column', '8px'),
+    'the left-positioned collapse header must retain its 8px fallback spacing',
+  )
+})
+
+test('Element Plus flex-gap fallbacks do not disable interactive container hit areas', () => {
+  execFileSync('npm', ['run', 'build'], { stdio: 'inherit' })
+  const root = parse(readBuiltCSS())
+  const polyfillPointerEvents = []
+
+  root.walkDecls('pointer-events', (declaration) => {
+    if (/^var\(--(?:parent-)?has-fgp\) (?:none|auto)$/.test(declaration.value)) {
+      polyfillPointerEvents.push(`${declaration.parent.selector}: ${declaration.value}`)
+    }
+  })
+
+  assert.deepEqual(polyfillPointerEvents, [])
 })
