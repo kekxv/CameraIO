@@ -1,7 +1,8 @@
 <template>
   <div class="live-workspace h-screen flex flex-col text-slate-800 overflow-hidden">
     <!-- 顶部控制栏 -->
-    <div class="ui-card rounded-none border-x-0 border-t-0 flex flex-wrap items-center justify-between px-4 py-2.5 flex-shrink-0 shadow-none">
+    <el-card shadow="never" class="rounded-none border-x-0 border-t-0 flex-shrink-0">
+      <div class="flex flex-wrap items-center justify-between px-4 py-2.5">
       <div class="compat-flex-gap-4">
         <h1 class="text-base font-semibold text-slate-800">实时预览</h1>
         <div class="compat-flex-gap-1 text-xs text-slate-500">
@@ -18,10 +19,11 @@
       </div>
       <div class="compat-flex-gap-3 ml-auto">
         <!-- 摄像头选择器 -->
-        <div class="relative">
-          <button
+        <el-popover v-model:visible="showCameraPicker" trigger="click" placement="bottom-end" width="288">
+          <template #reference>
+          <el-button
             type="button"
-            class="ui-button-secondary compat-flex-gap-1"
+            plain
             :aria-expanded="showCameraPicker"
             aria-controls="live-camera-picker"
             @click="showCameraPicker = !showCameraPicker"
@@ -29,11 +31,11 @@
             <AppIcon name="camera" class="w-4 h-4" />
             <span>选择摄像头</span>
             <span class="text-xs text-slate-500">{{ cameraSelectionLabel }}</span>
-          </button>
+          </el-button>
+          </template>
           <div
-            v-if="showCameraPicker"
             id="live-camera-picker"
-            class="absolute right-0 top-full z-20 mt-2 w-72 ui-card p-3"
+            class="p-1"
           >
             <div class="flex items-center justify-between mb-2">
               <span class="text-sm font-semibold text-slate-800">显示的摄像头</span>
@@ -41,31 +43,26 @@
                 <AppIcon name="close" class="w-4 h-4" />
               </button>
             </div>
-            <div class="max-h-56 overflow-y-auto border-y border-slate-100 py-1">
+            <el-checkbox-group v-model="pickerSelectedCameraIDs" class="block max-h-56 overflow-y-auto border-y border-slate-100 py-1">
               <label
                 v-for="cam in cameras"
                 :key="cam.id"
                 class="flex items-center px-2 py-2 rounded-md cursor-pointer hover:bg-slate-50"
               >
-                <input
-                  type="checkbox"
-                  :checked="isCameraSelected(cam.id)"
-                  class="w-4 h-4 text-primary-600 rounded"
-                  @change="toggleCameraSelection(cam.id)"
-                />
+                <el-checkbox :label="cam.id" />
                 <span class="ml-2 min-w-0 flex-1">
                   <span class="block text-sm text-slate-700 truncate">{{ cam.name }}</span>
                   <span class="block text-xs text-slate-400 truncate">{{ cam.ip }}</span>
                 </span>
                 <span class="w-2 h-2 rounded-full" :class="cam.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'"></span>
               </label>
-            </div>
+            </el-checkbox-group>
             <div class="compat-flex-gap-2 justify-between mt-3">
               <button type="button" class="ui-button-secondary" @click="clearCameraSelection">清空</button>
               <button type="button" class="ui-button-primary" @click="selectAllCameras">全部显示</button>
             </div>
           </div>
-        </div>
+        </el-popover>
         <!-- 网格切换 -->
         <div class="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
           <button
@@ -73,54 +70,38 @@
             :key="n"
             @click="gridSize = n"
             class="px-2.5 py-1 rounded-md text-xs font-medium transition-all"
-            :class="gridSize === n ? 'bg-white text-primary-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
+            :class="gridSize === n ? 'bg-white text-primary-700' : 'text-slate-500 hover:text-slate-700'"
           >
             {{ gridLabel(n) }}
           </button>
         </div>
         <!-- 全屏切换 -->
-        <button @click="toggleFullscreen" class="ui-icon-button" title="全屏 (F)" aria-label="切换全屏">
+        <el-tooltip content="全屏 (F)"><button @click="toggleFullscreen" class="ui-icon-button" aria-label="切换全屏">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5m-7 14H4m0 0v-4m0 4l5-5m7 5h4m0 0v-4m0 4l-5-5" />
           </svg>
-        </button>
+        </button></el-tooltip>
       </div>
-    </div>
+      </div>
+    </el-card>
 
     <!-- 视频网格区域 -->
     <div class="flex-1 p-2.5 min-h-0">
       <!-- 加载状态 -->
-      <div v-if="loading" class="h-full flex items-center justify-center text-slate-400">
-        <div class="text-center">
-          <div class="inline-block w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin mb-3"></div>
-          <p class="text-sm">加载中...</p>
-        </div>
-      </div>
+      <el-alert v-if="loading" title="加载中..." type="info" :closable="false" />
 
       <!-- 空状态 -->
-      <div v-else-if="cameras.length === 0" class="h-full flex items-center justify-center text-slate-400">
-        <div class="text-center">
-          <AppIcon name="camera" class="w-14 h-14 mx-auto mb-3 text-slate-300" />
-          <p class="text-sm text-slate-500">暂无摄像头</p>
-          <router-link to="/cameras" class="text-primary-600 hover:text-primary-500 text-sm mt-2 inline-block">去添加 →</router-link>
-        </div>
-      </div>
+      <el-empty v-else-if="cameras.length === 0" description="暂无摄像头"><router-link to="/cameras">去添加 →</router-link></el-empty>
 
       <!-- 尚未选择摄像头 -->
-      <div v-else-if="visibleCameras.length === 0" class="h-full flex items-center justify-center text-slate-400">
-        <div class="text-center">
-          <AppIcon name="camera" class="w-14 h-14 mx-auto mb-3 text-slate-300" />
-          <p class="text-sm text-slate-600">尚未选择用于预览的摄像头</p>
-          <button type="button" class="ui-button-primary mt-4" @click="showCameraPicker = true">选择摄像头</button>
-        </div>
-      </div>
+      <el-empty v-else-if="visibleCameras.length === 0" description="尚未选择用于预览的摄像头"><el-button type="primary" @click="showCameraPicker = true">选择摄像头</el-button></el-empty>
 
       <!-- 视频网格 -->
       <div v-else class="h-full grid gap-2" :style="gridStyle">
         <div
           v-for="cam in visibleCameras"
           :key="cam.id"
-          class="live-stream-tile compat-aspect-video relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 group shadow-sm hover:shadow-md transition-shadow"
+          class="live-stream-tile compat-aspect-video relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 group"
           :class="{ 'ring-2 ring-primary-500/30': streaming[cam.id] }"
         >
           <!-- 视频画面 -->
@@ -133,7 +114,7 @@
             />
             <div v-else class="flex flex-col items-center justify-center gap-3 text-center">
               <div v-if="cam.status === 'online'" class="flex flex-col items-center gap-3">
-                <div class="w-14 h-14 rounded-full bg-white shadow-sm border border-slate-200 flex items-center justify-center">
+                <div class="w-14 h-14 rounded-full bg-white border border-slate-200 flex items-center justify-center">
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -147,7 +128,7 @@
                 </button>
               </div>
               <div v-else class="flex flex-col items-center gap-2 text-slate-400">
-                <div class="w-12 h-12 rounded-full bg-white shadow-sm border border-slate-200 flex items-center justify-center">
+                <div class="w-12 h-12 rounded-full bg-white border border-slate-200 flex items-center justify-center">
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
                   </svg>
@@ -225,9 +206,7 @@
     </div>
 
     <!-- 录像设置弹窗 -->
-    <transition name="fade">
-      <div v-if="showRecordDialog" class="ui-modal-backdrop" @click.self="showRecordDialog = false">
-        <div class="ui-modal max-w-sm p-5">
+    <el-dialog v-model="showRecordDialog" title="录像设置" width="420px">
           <h3 class="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-1.5">
             <AppIcon name="film" class="w-4 h-4" />
             <span>录像设置</span>
@@ -275,14 +254,10 @@
               <span>开始录像</span>
             </button>
           </div>
-        </div>
-      </div>
-    </transition>
+    </el-dialog>
 
     <!-- 原生抓拍结果 -->
-    <transition name="fade">
-      <div v-if="snapshotTarget && snapshotURL" class="ui-modal-backdrop bg-black/60" @click.self="closeSnapshot">
-        <div class="ui-modal max-w-4xl flex flex-col overflow-hidden">
+    <el-dialog :model-value="Boolean(snapshotTarget && snapshotURL)" title="原生抓拍" width="900px" @close="closeSnapshot">
           <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
             <div>
               <h3 class="text-sm font-semibold text-slate-800">原生抓拍</h3>
@@ -293,11 +268,9 @@
             </button>
           </div>
           <div class="min-h-0 p-4 bg-slate-100 flex items-center justify-center">
-            <img :src="snapshotURL" :alt="`${snapshotTarget.name} 抓拍`" class="max-w-full max-h-[70vh] object-contain rounded shadow-sm" />
+            <img :src="snapshotURL" :alt="`${snapshotTarget.name} 抓拍`" class="max-w-full max-h-[70vh] object-contain rounded" />
           </div>
-        </div>
-      </div>
-    </transition>
+    </el-dialog>
   </div>
 </template>
 
@@ -339,6 +312,10 @@ const onlineCount = computed(() => cameras.value.filter((c) => c.status === 'onl
 const selectedCameras = computed(() => {
   if (selectedCameraIDs.value === null) return cameras.value
   return cameras.value.filter((camera) => selectedCameraIDs.value.includes(camera.id))
+})
+const pickerSelectedCameraIDs = computed({
+  get: () => selectedCameraIDs.value === null ? cameras.value.map((camera) => camera.id) : selectedCameraIDs.value,
+  set: (cameraIDs) => { selectedCameraIDs.value = cameraIDs },
 })
 const visibleCameras = computed(() => selectedCameras.value.slice(0, gridSize.value))
 const cameraSelectionLabel = computed(() => {

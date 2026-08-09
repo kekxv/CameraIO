@@ -205,21 +205,27 @@ test('shell, login, and FFmpeg feedback use Element Plus while retaining authent
   assert.match(ffmpegBanner, /<el-alert/)
 })
 
-test('camera management keeps operational actions and uses compatible layout primitives', () => {
+test('camera management uses Element Plus primitives while retaining camera operations', () => {
   const cameras = readFileSync(new URL('./views/Cameras.vue', import.meta.url), 'utf8')
-  assert.match(cameras, /handleScanLAN/)
-  assert.match(cameras, /ui-card/)
-  assert.match(cameras, /compat-flex-gap-/)
-  assert.match(cameras, /ui-modal/)
+  for (const primitive of ['el-card', 'el-tag', 'el-form', 'el-input', 'el-select', 'el-radio-group', 'el-checkbox-group', 'el-dialog', 'el-tooltip', 'el-empty', 'el-alert']) {
+    assert.match(cameras, new RegExp(`<${primitive}`), `camera management must use ${primitive}`)
+  }
+  for (const handler of ['handleScanLAN', 'handleSubmit', 'handleTest', 'handleDelete', 'handleSetCodec', 'handleSubmitNetwork', 'handleSyncTime']) {
+    assert.match(cameras, new RegExp(handler), `camera management must retain ${handler}`)
+  }
 })
 
-test('live view keeps media controls and applies the Chrome 72 aspect fallback', () => {
+test('live view uses Element Plus feedback and popover controls while retaining native media operations', () => {
   const live = readFileSync(new URL('./views/Live.vue', import.meta.url), 'utf8')
-  assert.match(live, /startStream/)
-  assert.match(live, /stopStream/)
+  for (const primitive of ['el-card', 'el-popover', 'el-checkbox-group', 'el-dialog', 'el-tooltip', 'el-empty', 'el-alert']) {
+    assert.match(live, new RegExp(`<${primitive}`), `live view must use ${primitive}`)
+  }
+  for (const handler of ['startStream', 'stopStream', 'startStreamFor', 'stopStreamFor', 'captureSnapshot', 'takeSnapshot', 'toggleRecord', 'confirmStartRecording']) {
+    assert.match(live, new RegExp(handler), `live view must retain ${handler}`)
+  }
+  assert.match(live, /getMjpegUrl\(cam\.id\)/)
+  assert.match(live, /:src="snapshotURL"/)
   assert.match(live, /compat-aspect-video/)
-  assert.match(live, /captureSnapshot/)
-  assert.match(live, /ui-modal/)
 })
 
 test('live view lets operators select the cameras shown in the preview grid', () => {
