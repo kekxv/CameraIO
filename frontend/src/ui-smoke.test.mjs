@@ -430,6 +430,13 @@ test('recordings center uses Element Plus filters, data surfaces, and single-vid
   assert.doesNotMatch(recordings, /按时间播放录像/)
 })
 
+test('recordings list displays an optional recording remark', () => {
+  const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
+
+  assert.match(recordings, /<el-table-column label="备注" min-width="160">/)
+  assert.match(recordings, /row\.remark\s*\|\|\s*'—'/)
+})
+
 test('recording filter toolbar keeps fields, actions, and result count aligned', () => {
   const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
 

@@ -34,6 +34,7 @@
             <el-table-column label="时长" width="100"><template #default="{ row = {} }">{{ formatDuration(row.duration) }}</template></el-table-column>
             <el-table-column label="大小" width="100"><template #default="{ row = {} }">{{ formatSize(row.file_size) }}</template></el-table-column>
             <el-table-column label="来源" width="90"><template #default="{ row = {} }"><el-tag effect="plain" size="small">{{ triggerLabel(row.trigger_type) }}</el-tag></template></el-table-column>
+			<el-table-column label="备注" min-width="160"><template #default="{ row = {} }"><span class="text-slate-600">{{ row.remark || '—' }}</span></template></el-table-column>
             <el-table-column label="状态" width="100"><template #default="{ row = {} }"><el-tag :type="statusType(row.status)" effect="plain" size="small">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="150" align="right">
               <template #default="{ row = {} }">
