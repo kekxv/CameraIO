@@ -196,9 +196,9 @@
     </div>
 
     <!-- 添加/编辑对话框 -->
-    <el-dialog v-model="cameraDialogOpen" :title="editingCamera ? '编辑摄像头' : '添加摄像头'" width="680px" class="camera-dialog">
-        <el-form @submit.prevent="handleSubmit" class="space-y-3">
-          <div>
+    <el-dialog v-model="cameraDialogOpen" :title="editingCamera ? '编辑摄像头' : '添加摄像头'" width="760px" class="camera-dialog">
+        <el-form @submit.prevent="handleSubmit" class="camera-dialog-form" label-position="top">
+          <div class="camera-form-field">
             <label class="block text-sm font-medium text-slate-700 mb-1">名称 *</label>
             <el-input
               v-model="form.name"
@@ -209,16 +209,13 @@
           </div>
 
           <!-- 接入协议（放在名称下方） -->
-          <div>
+          <div class="camera-protocol-choice">
             <label class="block text-sm font-medium text-slate-700 mb-1">接入协议</label>
-            <div class="grid grid-cols-3 gap-2">
-              <el-radio-group v-model="form.access_protocol" class="grid grid-cols-3 gap-2">
+              <el-radio-group v-model="form.access_protocol" class="camera-protocol-options">
               <el-radio
                 value="rtsp"
-                class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
-                :class="form.access_protocol === 'rtsp'
-                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                  : 'border-slate-300 hover:bg-slate-50'"
+                class="camera-protocol-option"
+                :class="{ 'is-active': form.access_protocol === 'rtsp' }"
               >
                 <div>
                   <div class="text-sm font-medium">RTSP</div>
@@ -227,10 +224,8 @@
               </el-radio>
               <el-radio
                 value="gb28181"
-                class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
-                :class="form.access_protocol === 'gb28181'
-                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                  : 'border-slate-300 hover:bg-slate-50'"
+                class="camera-protocol-option"
+                :class="{ 'is-active': form.access_protocol === 'gb28181' }"
               >
                 <div>
                   <div class="text-sm font-medium">GB28181</div>
@@ -239,10 +234,8 @@
               </el-radio>
               <el-radio
                 value="local"
-                class="flex items-center gap-2 px-3 py-2 border rounded-md cursor-pointer transition-colors"
-                :class="form.access_protocol === 'local'
-                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                  : 'border-slate-300 hover:bg-slate-50'"
+                class="camera-protocol-option"
+                :class="{ 'is-active': form.access_protocol === 'local' }"
               >
                 <div>
                   <div class="text-sm font-medium">本地</div>
@@ -251,12 +244,11 @@
               </el-radio>
               </el-radio-group>
           </div>
-          </div>
 
           <!-- RTSP 设备的网络配置（GB28181 通过 SIP 注册，本地用系统设备，均无需 IP/端口） -->
           <template v-if="form.access_protocol === 'rtsp'">
-            <div class="grid grid-cols-3 gap-3">
-              <div class="col-span-2">
+            <div class="camera-form-grid camera-form-grid--network">
+              <div class="camera-form-field camera-form-field--wide">
                 <label class="block text-sm font-medium text-slate-700 mb-1">IP 地址 *</label>
                 <el-input
                   v-model="form.ip"
@@ -265,7 +257,7 @@
                   placeholder="192.168.1.100"
                 />
               </div>
-              <div>
+              <div class="camera-form-field">
                 <label class="block text-sm font-medium text-slate-700 mb-1">端口</label>
                 <el-input
                   v-model.number="form.port"
@@ -275,8 +267,8 @@
               </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-3">
-              <div>
+            <div class="camera-form-grid">
+              <div class="camera-form-field">
                 <label class="block text-sm font-medium text-slate-700 mb-1">用户名</label>
                 <el-input
                   v-model="form.username"
@@ -284,7 +276,7 @@
                   placeholder="admin"
                 />
               </div>
-              <div>
+              <div class="camera-form-field">
                 <label class="block text-sm font-medium text-slate-700 mb-1">密码</label>
                 <el-input
                   v-model="form.password"
@@ -294,7 +286,7 @@
             </div>
 
             <!-- 测试连接按钮 -->
-            <div v-if="form.ip && (form.username || form.password)" class="flex items-center gap-2">
+            <div v-if="form.ip && (form.username || form.password)" class="camera-inline-feedback compat-flex-gap-2">
               <el-button
                 plain
                 native-type="button"
@@ -310,8 +302,8 @@
               </span>
             </div>
 
-            <div class="grid grid-cols-2 gap-3">
-              <div>
+            <div class="camera-form-grid">
+              <div class="camera-form-field">
                 <label class="block text-sm font-medium text-slate-700 mb-1">品牌</label>
                 <el-select
                   v-model="form.brand"
@@ -322,7 +314,7 @@
                   <el-option label="宇视" value="uniview" />
                 </el-select>
               </div>
-              <div>
+              <div class="camera-form-field">
                 <label class="block text-sm font-medium text-slate-700 mb-1">设备类型</label>
                 <el-select
                   v-model="form.device_type"
@@ -390,9 +382,9 @@
           <!-- RTSP 专属字段 -->
           <template v-if="form.access_protocol === 'rtsp'">
             <!-- 码流选择 -->
-            <div>
+            <div class="camera-stream-choice">
               <label class="block text-sm font-medium text-slate-700 mb-1">码流类型</label>
-              <el-radio-group v-model="form.stream_type" class="w-full">
+              <el-radio-group v-model="form.stream_type" class="camera-stream-options">
                 <el-radio-button
                   v-for="opt in [{v:'main',l:'主码流'},{v:'sub',l:'子码流'}]"
                   :key="opt.v"
@@ -490,15 +482,10 @@
           <el-alert v-if="submitError" :title="submitError" type="error" :closable="false" />
           <el-alert v-if="submitSuccess" :title="submitSuccess" type="success" :closable="false" />
 
-          <div class="flex justify-end gap-2 pt-2">
-            <el-button
-              plain
-              native-type="button"
-              @click="closeDialog"
-            >
-              取消
-            </el-button>
-            <!-- 编辑模式：测试按钮（仅 RTSP） -->
+        </el-form>
+        <template #footer>
+          <div class="camera-dialog-footer compat-flex-gap-2">
+            <el-button plain native-type="button" @click="closeDialog">取消</el-button>
             <el-button
               v-if="editingCamera && editingCamera.access_protocol === 'rtsp'"
               plain
@@ -509,15 +496,9 @@
               <AppIcon name="plug" class="w-4 h-4" />
               <span>测试连接</span>
             </el-button>
-            <el-button
-              type="primary"
-              native-type="submit"
-              :loading="submitting"
-            >
-              保存
-            </el-button>
+            <el-button type="primary" :loading="submitting" @click="handleSubmit">保存</el-button>
           </div>
-        </el-form>
+        </template>
     </el-dialog>
 
     <!-- 测试结果弹窗 -->

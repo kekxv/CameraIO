@@ -239,6 +239,18 @@ test('camera management uses Element Plus primitives while retaining camera oper
   }
 })
 
+test('camera dialog layout uses a single aligned protocol choice group and compact field grid', () => {
+  const cameras = readFileSync(new URL('./views/Cameras.vue', import.meta.url), 'utf8')
+
+  assert.match(cameras, /class="camera-dialog-form"/)
+  assert.match(cameras, /class="camera-protocol-choice"/)
+  assert.match(cameras, /class="camera-protocol-options"/)
+  assert.match(cameras, /class="camera-form-grid camera-form-grid--network"/)
+  assert.match(cameras, /class="camera-stream-choice"/)
+  assert.match(cameras, /<template #footer>[\s\S]*?class="camera-dialog-footer\b/)
+  assert.doesNotMatch(cameras, /<div class="grid grid-cols-3 gap-2">\s*<el-radio-group/)
+})
+
 test('live view uses Element Plus feedback and popover controls while retaining native media operations', () => {
   const live = readFileSync(new URL('./views/Live.vue', import.meta.url), 'utf8')
   for (const primitive of ['el-card', 'el-popover', 'el-checkbox-group', 'el-dialog', 'el-tooltip', 'el-empty', 'el-alert']) {
@@ -396,6 +408,18 @@ test('recordings center uses Element Plus filters, data surfaces, and single-vid
   assert.match(recordings, /page_size: pageSize/)
   assert.equal((recordings.match(/<video/g) || []).length, 2, 'sequential list preview must keep two native video slots')
   assert.doesNotMatch(recordings, /按时间播放录像/)
+})
+
+test('recording filter toolbar keeps fields, actions, and result count aligned', () => {
+  const recordings = readFileSync(new URL('./views/Recordings.vue', import.meta.url), 'utf8')
+
+  assert.match(recordings, /class="recording-filter-bar"/)
+  assert.match(recordings, /class="recording-filter-fields compat-flex-gap-3"/)
+  assert.match(recordings, /class="recording-filter-actions compat-flex-gap-2"/)
+  assert.match(recordings, /class="recording-filter-count"/)
+  assert.match(recordings, /<el-date-picker[\s\S]*?v-model="dateRange"[\s\S]*?type="daterange"[\s\S]*?range-separator="至"/)
+  assert.match(recordings, /@click="applyHistoryFilters"/)
+  assert.match(recordings, /@click="clearDateRange"/)
 })
 
 test('recordings list preview restores guarded native segment continuation and Chrome 72-safe filter spacing', () => {

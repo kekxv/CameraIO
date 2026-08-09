@@ -7,15 +7,19 @@
     <el-tabs v-model="activeTab" class="mb-4">
       <el-tab-pane label="录像列表" name="recordings">
         <template #label><span class="compat-flex-gap-1"><AppIcon name="film" class="w-4 h-4" /><span>录像列表</span></span></template>
-        <el-card shadow="never" class="mb-4">
-          <div class="compat-flex-gap-3 flex flex-wrap items-end">
-            <div><label class="block text-xs font-medium text-slate-500 mb-1">摄像头</label><el-select v-model="filter.cameraId" clearable placeholder="全部" class="w-40" @change="applyHistoryFilters"><el-option label="全部" :value="null" /><el-option v-for="cam in cameras" :key="cam.id" :label="cam.name" :value="cam.id" /></el-select></div>
-            <div><label class="block text-xs font-medium text-slate-500 mb-1">状态</label><el-select v-model="filter.status" clearable placeholder="全部" class="w-32" @change="applyHistoryFilters"><el-option label="录制中" value="recording" /><el-option label="已完成" value="completed" /><el-option label="失败" value="failed" /></el-select></div>
-            <div><label class="block text-xs font-medium text-slate-500 mb-1">录像日期</label><el-date-picker v-model="dateRange" type="daterange" range-separator="至" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" /></div>
-            <el-button plain @click="clearDateRange">清除日期</el-button>
-            <el-button type="primary" @click="applyHistoryFilters">查询历史</el-button>
-            <el-button plain @click="loadRecordings">刷新</el-button>
-            <span class="ml-auto text-xs text-slate-500">共 {{ total }} 条记录</span>
+        <el-card shadow="never" class="recording-filter-card mb-4">
+          <div class="recording-filter-bar">
+            <div class="recording-filter-fields compat-flex-gap-3">
+              <div class="recording-filter-field recording-filter-field--camera"><label>摄像头</label><el-select v-model="filter.cameraId" clearable placeholder="全部" @change="applyHistoryFilters"><el-option label="全部" :value="null" /><el-option v-for="cam in cameras" :key="cam.id" :label="cam.name" :value="cam.id" /></el-select></div>
+              <div class="recording-filter-field recording-filter-field--status"><label>状态</label><el-select v-model="filter.status" clearable placeholder="全部" @change="applyHistoryFilters"><el-option label="录制中" value="recording" /><el-option label="已完成" value="completed" /><el-option label="失败" value="failed" /></el-select></div>
+              <div class="recording-filter-field recording-filter-field--date"><label>录像日期</label><el-date-picker v-model="dateRange" type="daterange" range-separator="至" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" /></div>
+            </div>
+            <div class="recording-filter-actions compat-flex-gap-2">
+              <el-button plain @click="clearDateRange">清除日期</el-button>
+              <el-button type="primary" @click="applyHistoryFilters">查询历史</el-button>
+              <el-button plain @click="loadRecordings">刷新</el-button>
+            </div>
+            <span class="recording-filter-count">共 {{ total }} 条记录</span>
           </div>
           <el-alert v-if="historyError" :title="historyError" type="error" :closable="false" class="mt-3" />
         </el-card>
