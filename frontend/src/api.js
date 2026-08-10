@@ -96,7 +96,7 @@ export const stopStream = (id) => api.post(`/streams/${id}/stop`)
 
 export const normalizeResourceSafeRecordingOptions = (options = {}) => ({
   ...options,
-  format: ['ts', 'webm'].includes(options.format) ? options.format : 'mp4',
+  format: options.format === 'ts' ? 'ts' : 'mp4',
   bitrate: 0,
 })
 

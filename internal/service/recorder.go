@@ -328,6 +328,15 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	default:
 		return nil, &RecordingValidationError{Message: fmt.Sprintf("unsupported format: %s (use mp4, webm or ts)", format)}
 	}
+	// 触发类型
+	triggerType := in.TriggerType
+	if triggerType == "" {
+		triggerType = model.TriggerAPI
+	}
+	segmented := cam.AccessProtocol != model.ProtocolGB28181 && triggerType != model.TriggerManual
+	if segmented && format != model.FormatMP4 {
+		return nil, &RecordingValidationError{Message: fmt.Sprintf("%s recordings are not supported", format)}
+	}
 	if in.Bitrate > 0 {
 		return nil, &RecordingValidationError{Message: "bitrate must be 0 for resource-safe stream-copy recording"}
 	}
@@ -347,12 +356,6 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	}
 	filePath := filepath.Join(dir, fileName)
 
-	// 触发类型
-	triggerType := in.TriggerType
-	if triggerType == "" {
-		triggerType = model.TriggerAPI
-	}
-
 	// 创建录像记录
 	recording := &model.Recording{
 		CameraID:    cam.ID,
@@ -369,7 +372,6 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 		heartbeatAt := now
 		recording.HeartbeatAt = &heartbeatAt
 	}
-	segmented := format == model.FormatMP4 && cam.AccessProtocol != model.ProtocolGB28181 && triggerType != model.TriggerManual
 	if segmented {
 		recording.FilePath = dir
 		recording.StorageMode = model.StorageModeSegmented
