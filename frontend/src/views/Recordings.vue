@@ -10,7 +10,7 @@
         <el-card shadow="never" class="recording-filter-card mb-4">
           <div class="recording-filter-bar">
             <div class="recording-filter-fields compat-flex-gap-3">
-              <div class="recording-filter-field recording-filter-field--camera"><label>摄像头</label><el-select v-model="filter.cameraId" clearable placeholder="全部" @change="applyHistoryFilters"><el-option label="全部" :value="null" /><el-option v-for="cam in cameras" :key="cam.id" :label="cam.name" :value="cam.id" /></el-select></div>
+              <div class="recording-filter-field recording-filter-field--camera"><label>摄像头</label><el-select v-model="filter.cameraId" clearable placeholder="全部" @change="applyHistoryFilters"><el-option label="全部" value="" /><el-option v-for="cam in cameras" :key="cam.id" :label="cam.name" :value="cam.id" /></el-select></div>
               <div class="recording-filter-field recording-filter-field--status"><label>状态</label><el-select v-model="filter.status" clearable placeholder="全部" @change="applyHistoryFilters"><el-option label="录制中" value="recording" /><el-option label="已完成" value="completed" /><el-option label="失败" value="failed" /></el-select></div>
               <div class="recording-filter-field recording-filter-field--date"><label>录像日期</label><el-date-picker v-model="dateRange" type="daterange" range-separator="至" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" /></div>
             </div>
@@ -36,7 +36,7 @@
             <el-table-column label="来源" width="90"><template #default="{ row = {} }"><el-tag effect="plain" size="small">{{ triggerLabel(row.trigger_type) }}</el-tag></template></el-table-column>
 			<el-table-column label="备注" min-width="160"><template #default="{ row = {} }"><span class="text-slate-600">{{ row.remark || '—' }}</span></template></el-table-column>
             <el-table-column label="状态" width="100"><template #default="{ row = {} }"><el-tag :type="statusType(row.status)" effect="plain" size="small">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="150" align="right">
+            <el-table-column label="操作" width="190" align="right">
               <template #default="{ row = {} }">
                 <div class="compat-flex-gap-1 justify-end">
                   <el-button v-if="row.status === 'completed'" text type="primary" @click="openRecordingPreview(row)">预览</el-button>
@@ -72,7 +72,8 @@
     <el-dialog v-model="previewOpen" :title="previewRec ? `录像预览 #${previewRec.id}` : '录像预览'" width="760px" @closed="closePreview">
       <p v-if="previewRec" class="text-xs text-slate-500 mb-3">{{ cameraName(previewRec.camera_id) }} · {{ formatTime(previewRec.start_time) }}</p>
       <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" class="mb-3" />
-      <div v-else class="relative compat-aspect-video bg-black flex items-center justify-center">
+      <el-alert v-else-if="previewRec && !isBrowserPlayable(previewRec)" title='TS 格式浏览器无法直接预览，请点击下方"下载"播放' type="warning" :closable="false" class="mb-3" />
+      <div v-else-if="previewRec && isBrowserPlayable(previewRec)" class="relative compat-aspect-video bg-black flex items-center justify-center">
         <video
           v-if="previewRec"
           :ref="(element) => attachPreviewVideo(0, element)"
@@ -182,6 +183,7 @@ const formatTime = (value) => value ? new Date(value).toLocaleString('zh-CN') : 
 const formatDuration = (seconds) => { if (!seconds) return '-'; const h = Math.floor(seconds / 3600); const m = Math.floor((seconds % 3600) / 60); const s = seconds % 60; return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}` }
 const formatSize = (bytes) => { if (!bytes) return '-'; if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`; return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB` }
 const isSegmentedRecording = (recording) => recording.storage_mode === 'segmented'
+const isBrowserPlayable = (recording) => !recording || (recording.format || 'mp4').toLowerCase() !== 'ts'
 const downloadUrl = (id) => { const token = localStorage.getItem('token'); return `/api/v1/recordings/${id}/download?token=${token}` }
 const attachPreviewVideo = (slot, video) => previewCoordinator.attach(slot, video)
 const handlePreviewMetadata = (slot) => previewCoordinator.loadedMetadata(slot)

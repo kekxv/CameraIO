@@ -1,5 +1,5 @@
 <template>
-  <div class="live-workspace h-screen flex flex-col text-slate-800 overflow-hidden">
+  <div class="live-workspace flex flex-col text-slate-800 overflow-hidden">
     <!-- 顶部控制栏 -->
     <el-card shadow="never" class="rounded-none border-x-0 border-t-0 flex-shrink-0">
       <div class="flex flex-wrap items-center justify-between px-4 py-2.5">
@@ -144,7 +144,7 @@
           </transition>
 
           <!-- 顶部信息条 -->
-          <div class="absolute top-0 left-0 right-0 px-2.5 py-1.5 bg-slate-900/70 backdrop-blur-sm flex items-center justify-between z-5">
+          <div class="absolute top-0 left-0 right-0 px-2.5 py-1.5 bg-slate-900/70 backdrop-blur-sm flex items-center justify-between z-[5]">
             <div class="flex items-center gap-1.5 min-w-0">
               <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" :class="cam.status === 'online' ? 'bg-emerald-400' : 'bg-slate-500'"></span>
               <span class="text-xs text-white truncate font-medium">{{ cam.name }}</span>
@@ -156,11 +156,11 @@
           </div>
 
           <!-- 底部控制条 -->
-          <div class="absolute bottom-0 left-0 right-0 px-2.5 py-1.5 bg-slate-900/70 backdrop-blur-sm flex items-center justify-between z-5">
+          <div class="absolute bottom-0 left-0 right-0 px-2.5 py-2 bg-slate-900/70 backdrop-blur-sm flex items-center justify-between z-[5]">
             <div class="flex items-center gap-1.5">
               <span class="text-[10px] text-white/60 font-mono">{{ cam.ip }}</span>
             </div>
-            <div class="flex items-center gap-0.5">
+            <div class="flex items-center gap-1">
               <el-button
                 v-if="streaming[cam.id]"
                 text
@@ -170,7 +170,7 @@
                 class="live-media-action"
                 aria-label="停止预览"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
                   <rect x="4" y="4" width="12" height="12" rx="1.5" />
                 </svg>
               </el-button>
@@ -183,7 +183,7 @@
                 class="live-media-action"
                 :aria-label="capturing[cam.id] ? '抓拍中' : '原生抓拍'"
               >
-                <AppIcon name="camera" class="w-3.5 h-3.5" />
+                <AppIcon name="camera" class="w-4 h-4" />
               </el-button>
               <el-button
                 text
@@ -192,10 +192,10 @@
                 @click="toggleRecord(cam)"
                 :loading="recording[cam.id] === 'toggling'"
                 class="live-media-action"
-                :class="recording[cam.id] === 'active' ? 'text-red-400 bg-red-500/20' : 'text-slate-300 hover:text-white hover:bg-white/15'"
+                :class="recording[cam.id] === 'active' ? 'is-recording' : ''"
                 :aria-label="recording[cam.id] === 'active' ? '停止录像' : '开始录像'"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
                   <circle cx="10" cy="10" r="6" />
                 </svg>
               </el-button>
@@ -206,60 +206,47 @@
     </div>
 
     <!-- 录像设置弹窗 -->
-    <el-dialog v-model="showRecordDialog" title="录像设置" width="420px">
-          <h3 class="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-1.5">
-            <AppIcon name="film" class="w-4 h-4" />
-            <span>录像设置</span>
-          </h3>
-          <p class="text-xs text-slate-500 mb-3">{{ recordTarget?.name }} · {{ recordTarget?.ip }}</p>
+    <el-dialog v-model="showRecordDialog" title="录像设置" width="440px">
+      <h3 class="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-1.5">
+        <AppIcon name="film" class="w-4 h-4" />
+        <span>录像设置</span>
+      </h3>
+      <p class="text-xs text-slate-500 mb-4">{{ recordTarget?.name }} · {{ recordTarget?.ip }}</p>
 
-          <!-- 格式选择 -->
-          <div class="mb-3">
-            <label class="block text-xs font-medium text-slate-600 mb-1.5">录像格式</label>
-            <el-radio-group v-model="recordFormat" class="w-full">
-              <el-radio-button
-                v-for="fmt in [{v:'mp4',l:'MP4'},{v:'ts',l:'TS'}]"
-                :key="fmt.v"
-                :value="fmt.v"
-                class="flex-1"
-              >
-                {{ fmt.l }}
-              </el-radio-button>
-            </el-radio-group>
-            <p class="text-[10px] text-slate-400 mt-1">
-              {{ recordFormat === 'mp4' ? '单文件 MP4 流拷贝，推荐' : '单文件 TS 流拷贝' }}
-            </p>
-          </div>
+      <el-form label-position="top">
+        <!-- 格式选择 -->
+        <el-form-item label="录像格式">
+          <el-select v-model="recordFormat" class="w-full">
+            <el-option v-for="fmt in recordFormats" :key="fmt.v" :value="fmt.v" :label="fmt.l" />
+          </el-select>
+          <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">{{ recordFormatHint }}</p>
+        </el-form-item>
 
-          <!-- 资源安全模式固定使用相机原码率流拷贝 -->
-          <div class="mb-3">
-            <label class="block text-xs font-medium text-slate-600 mb-1.5">码率</label>
-			<p class="text-[10px] text-slate-400 mt-1">
-			  原画质（相机码率，视频流拷贝）
-			</p>
-          </div>
+        <!-- 录制时长上限 -->
+        <el-form-item label="录制时长">
+          <el-select v-model="recordDurationMin" class="w-full">
+            <el-option :value="0" label="不限" />
+            <el-option v-for="m in [5, 10, 30, 60]" :key="m" :value="m" :label="`${m} 分钟`" />
+          </el-select>
+          <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">录制期间通过心跳续期，到达时长上限自动停止。</p>
+        </el-form-item>
 
-          <!-- 音频开关 -->
-          <el-checkbox v-model="recordWithAudio" class="mb-4">包含音频</el-checkbox>
+        <!-- 音频 + 备注 -->
+        <el-form-item>
+          <el-checkbox v-model="recordWithAudio">包含音频</el-checkbox>
+        </el-form-item>
+        <el-form-item label="录像备注">
+          <el-input v-model="recordRemark" maxlength="255" clearable placeholder="可选，例如：柜员交接" />
+        </el-form-item>
+      </el-form>
 
-          <div class="mb-4">
-            <label class="block text-xs font-medium text-slate-600 mb-1.5">录像备注</label>
-            <el-input
-              v-model="recordRemark"
-              maxlength="255"
-              clearable
-              placeholder="可选，例如：柜员交接"
-            />
-          </div>
-
-          <!-- 操作按钮 -->
-          <div class="compat-flex-gap-2 justify-end">
-            <el-button plain @click="showRecordDialog = false">取消</el-button>
-            <el-button type="danger" @click="confirmStartRecording">
-              <AppIcon name="record" class="w-3.5 h-3.5" />
-              <span>开始录像</span>
-            </el-button>
-          </div>
+      <template #footer>
+        <el-button plain @click="showRecordDialog = false">取消</el-button>
+        <el-button type="danger" @click="confirmStartRecording">
+          <AppIcon name="record" class="w-3.5 h-3.5" />
+          <span>开始录像</span>
+        </el-button>
+      </template>
     </el-dialog>
 
     <!-- 原生抓拍结果 -->
@@ -301,9 +288,22 @@ const snapshotDialogOpen = ref(false)
 const showRecordDialog = ref(false)
 const recordTarget = ref(null)
 const recordFormat = ref('mp4')
+const recordFormats = [
+  { v: 'mp4', l: 'MP4' },
+  { v: 'webm', l: 'WebM' },
+  { v: 'ts', l: 'TS' },
+]
+const recordFormatHint = computed(() => {
+  switch (recordFormat.value) {
+    case 'webm': return 'WebM 容器，视频转码 VP9，体积更小（需 CPU 转码）'
+    case 'ts': return '单文件 TS 流拷贝，适合网络播放'
+    default: return '单文件 MP4 流拷贝，兼容性最好，推荐'
+  }
+})
 const recordWithAudio = ref(false)
 const recordBitrate = ref(0) // kbps, 0=流拷贝原画质
 const recordRemark = ref('')
+const recordDurationMin = ref(0) // 分钟，0=不限时长
 const nowStr = ref('')
 let clockTimer = null
 let eventWs = null
@@ -367,15 +367,16 @@ const getMjpegUrl = (cameraId) => {
   return mjpegUrls[cameraId]
 }
 
-const loadCameras = async () => {
-  loading.value = true
+const loadCameras = async (silent = false) => {
+  // 静默刷新（事件驱动的后台更新）不闪"加载中"，避免页面刷新闪烁
+  if (!silent) loading.value = true
   try {
     cameras.value = await listCameras()
     if (selectedCameraIDs.value !== null) {
       selectedCameraIDs.value = selectedCameraIDs.value.filter((id) => cameras.value.some((camera) => camera.id === id))
     }
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -468,6 +469,7 @@ const toggleRecord = async (cam) => {
     recordWithAudio.value = false
     recordBitrate.value = 0
     recordRemark.value = ''
+    recordDurationMin.value = 0
     showRecordDialog.value = true
   }
 }
@@ -484,6 +486,7 @@ const confirmStartRecording = async () => {
       bitrate: recordBitrate.value,
       trigger_type: 'manual',
       remark: recordRemark.value,
+      max_duration: recordDurationMin.value * 60,
     })
     const recordingId = rec.recording_id || rec.id
     if (!recordingId) throw new Error('开始录像未返回录像 ID')
@@ -531,7 +534,7 @@ onMounted(async () => {
       }
     }
     if (event.type === 'camera_status') {
-      loadCameras()
+      loadCameras(true)
     }
   })
 })
@@ -559,6 +562,28 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 页面嵌在 .page-frame（padding 24px×2）内，去掉 h-screen 改用视口减去内边距，避免文档滚动条 */
+.live-workspace {
+  height: calc(100vh - 48px);
+}
+@media (max-width: 899px) {
+  .live-workspace {
+    height: calc(100vh - 32px);
+  }
+}
+/* 底部操作按钮：白色图标 + 半透明圆底，在任意视频画面上都清晰可见 */
+.live-media-action {
+  color: #f8fafc !important;
+  background-color: rgba(255, 255, 255, 0.12) !important;
+}
+.live-media-action:hover {
+  color: #ffffff !important;
+  background-color: rgba(255, 255, 255, 0.26) !important;
+}
+.live-media-action.is-recording {
+  color: #fecaca !important;
+  background-color: rgba(239, 68, 68, 0.3) !important;
+}
 .fade-enter-active, .fade-leave-active {
   transition: opacity 0.2s;
 }

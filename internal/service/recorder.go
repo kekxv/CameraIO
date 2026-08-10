@@ -326,10 +326,7 @@ func (s *RecorderService) StartRecording(in *StartRecordingInput) (*model.Record
 	case model.FormatMP4, model.FormatWebM, model.FormatTS:
 		// OK
 	default:
-		return nil, &RecordingValidationError{Message: fmt.Sprintf("unsupported format: %s (use mp4 or ts)", format)}
-	}
-	if format == model.FormatWebM {
-		return nil, &RecordingValidationError{Message: "webm recordings are not supported by the resource-safe recorder; use mp4"}
+		return nil, &RecordingValidationError{Message: fmt.Sprintf("unsupported format: %s (use mp4, webm or ts)", format)}
 	}
 	if in.Bitrate > 0 {
 		return nil, &RecordingValidationError{Message: "bitrate must be 0 for resource-safe stream-copy recording"}
