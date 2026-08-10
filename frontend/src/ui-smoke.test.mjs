@@ -158,6 +158,7 @@ const renderRecordings = async (overrides = {}) => {
     statusType: () => 'success',
     downloadUrl: () => '/legacy-download',
     isSegmentedRecording: (recording) => recording.storage_mode === 'segmented',
+    isBrowserPlayable: (recording) => !recording || (recording.format || 'mp4').toLowerCase() !== 'ts',
     coverageTitle: (part) => part.type === 'gap' ? '录像空档' : '可播放录像',
     ...overrides,
   }
@@ -317,7 +318,7 @@ test('camera and live controls complete the Element Plus plain migration', () =>
   assert.match(cameras, /<el-checkbox(?=[^>]*:value="ch\.channel")[^>]*>[\s\S]*?CH\{\{ ch\.channel \}\}[\s\S]*?<\/el-checkbox>/)
   assert.doesNotMatch(cameras, /<el-checkbox\s+:label="ch\.channel"/)
   assert.match(live, /<el-radio-group\s+v-model="gridSize"/)
-  assert.match(live, /<el-radio-group\s+v-model="recordFormat"/)
+  assert.match(live, /<el-select\s+v-model="recordFormat"/)
 })
 
 test('camera test-info dialog remains render-safe after its backing object is cleared', async () => {
