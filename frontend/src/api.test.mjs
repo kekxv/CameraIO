@@ -89,7 +89,7 @@ test('recording date range filters use local day boundaries without limiting his
   assert.throws(() => apiModule.normalizeRecordingDateRange({
     startDate: '2026-08-09',
     endDate: '2026-08-02',
-  }), /结束日期必须不早于开始日期/)
+  }), /结束时间必须晚于开始时间/)
 })
 
 test('recording date range uses the operator local midnight outside UTC', () => {
@@ -106,6 +106,20 @@ test('recording date range uses the operator local midnight outside UTC', () => 
     start_time: '2026-08-02T04:00:00.000Z',
     end_time: '2026-08-10T04:00:00.000Z',
   })
+})
+
+test('recording history filters accept minute-precise local datetime bounds', () => {
+  assert.deepEqual(apiModule.normalizeRecordingDateRange({
+    startTime: '2026-08-11T09:15',
+    endTime: '2026-08-11T10:45',
+  }), {
+    start_time: '2026-08-11T09:15:00.000Z',
+    end_time: '2026-08-11T10:45:00.000Z',
+  })
+  assert.throws(() => apiModule.normalizeRecordingDateRange({
+    startTime: '2026-08-11T10:45',
+    endTime: '2026-08-11T09:15',
+  }), /结束时间必须晚于开始时间/)
 })
 
 test('recording history ignores an older out-of-order response', async () => {

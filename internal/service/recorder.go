@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1108,6 +1109,28 @@ type RecordingQuery struct {
 	PageSize  int
 }
 
+// RecordingListItem is one physical media file in the recording history.
+// ID and RecordingID identify the parent logical recording so existing stop
+// and delete operations remain scoped to the whole recording session.
+type RecordingListItem struct {
+	ID          uint       `json:"id"`
+	RecordingID uint       `json:"recording_id"`
+	SegmentID   *uint      `json:"segment_id,omitempty"`
+	Sequence    int        `json:"sequence,omitempty"`
+	CameraID    uint       `json:"camera_id"`
+	FilePath    string     `json:"file_path"`
+	FileSize    int64      `json:"file_size"`
+	StartTime   time.Time  `json:"start_time"`
+	EndTime     *time.Time `json:"end_time,omitempty"`
+	Duration    int        `json:"duration"`
+	DurationMS  int64      `json:"-"`
+	TriggerType string     `json:"trigger_type"`
+	Status      string     `json:"status"`
+	Format      string     `json:"format"`
+	StorageMode string     `json:"storage_mode"`
+	Remark      string     `json:"remark"`
+}
+
 func (s *RecorderService) List(query RecordingQuery) ([]model.Recording, int64, error) {
 	db := s.db.Model(&model.Recording{})
 	if query.CameraID != nil {
@@ -1138,6 +1161,85 @@ func (s *RecorderService) List(query RecordingQuery) ([]model.Recording, int64, 
 		return nil, 0, err
 	}
 	return recs, total, nil
+}
+
+// ListHistory lists each physical file. Segmented recordings therefore appear
+// as one row per segment while legacy single-file recordings retain one row.
+func (s *RecorderService) ListHistory(query RecordingQuery) ([]RecordingListItem, int64, error) {
+	legacyDB := s.db.Model(&model.Recording{}).Where("storage_mode <> ?", model.StorageModeSegmented)
+	if query.CameraID != nil {
+		legacyDB = legacyDB.Where("camera_id = ?", *query.CameraID)
+	}
+	if query.StartTime != nil {
+		legacyDB = legacyDB.Where("COALESCE(end_time, CURRENT_TIMESTAMP) > ?", query.StartTime.UTC())
+	}
+	if query.EndTime != nil {
+		legacyDB = legacyDB.Where("start_time < ?", query.EndTime.UTC())
+	}
+	if query.Status != nil {
+		legacyDB = legacyDB.Where("status = ?", *query.Status)
+	}
+	var legacy []model.Recording
+	if err := legacyDB.Find(&legacy).Error; err != nil {
+		return nil, 0, err
+	}
+
+	segmentDB := s.db.Table("recording_segments AS segment").
+		Select(`recordings.id AS id, recordings.id AS recording_id, segment.id AS segment_id, segment.sequence AS sequence,
+			recordings.camera_id AS camera_id, segment.file_path AS file_path, segment.file_size AS file_size,
+			segment.start_time AS start_time, segment.end_time AS end_time, segment.duration_ms AS duration_ms,
+			recordings.trigger_type AS trigger_type, segment.status AS status, segment.format AS format,
+			recordings.storage_mode AS storage_mode, recordings.remark AS remark`).
+		Joins("JOIN recordings ON recordings.id = segment.recording_id").
+		Where("recordings.storage_mode = ?", model.StorageModeSegmented)
+	if query.CameraID != nil {
+		segmentDB = segmentDB.Where("recordings.camera_id = ?", *query.CameraID)
+	}
+	if query.StartTime != nil {
+		segmentDB = segmentDB.Where("segment.end_time > ?", query.StartTime.UTC())
+	}
+	if query.EndTime != nil {
+		segmentDB = segmentDB.Where("segment.start_time < ?", query.EndTime.UTC())
+	}
+	if query.Status != nil {
+		segmentDB = segmentDB.Where("recordings.status = ?", *query.Status)
+	}
+	var items []RecordingListItem
+	if err := segmentDB.Scan(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	for _, recording := range legacy {
+		items = append(items, RecordingListItem{
+			ID: recording.ID, RecordingID: recording.ID, CameraID: recording.CameraID,
+			FilePath: recording.FilePath, FileSize: recording.FileSize, StartTime: recording.StartTime,
+			EndTime: recording.EndTime, Duration: recording.Duration, TriggerType: recording.TriggerType,
+			Status: recording.Status, Format: recording.Format, StorageMode: recording.StorageMode, Remark: recording.Remark,
+		})
+	}
+	for index := range items {
+		if items[index].DurationMS > 0 {
+			items[index].Duration = int(items[index].DurationMS / int64(time.Second/time.Millisecond))
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].StartTime.After(items[j].StartTime)
+	})
+	total := int64(len(items))
+	if query.Page <= 0 {
+		query.Page = 1
+	}
+	if query.PageSize <= 0 {
+		query.PageSize = 20
+	}
+	offset := (query.Page - 1) * query.PageSize
+	if offset >= len(items) {
+		return []RecordingListItem{}, total, nil
+	}
+	end := offset + query.PageSize
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end], total, nil
 }
 
 // GetRecording 返回指定录像记录。

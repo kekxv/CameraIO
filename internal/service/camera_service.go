@@ -24,11 +24,11 @@ import (
 
 // CameraService 摄像头业务逻辑，包含 ONVIF 自动调优。
 type CameraService struct {
-	db     *gorm.DB
-	onvif  *ONVIFService
+	db      *gorm.DB
+	onvif   *ONVIFService
 	gb28181 *GB28181Service
-	cancel context.CancelFunc
-	ctx    context.Context
+	cancel  context.CancelFunc
+	ctx     context.Context
 }
 
 var digestAuthParamRe = regexp.MustCompile(`([A-Za-z]+)=(?:"([^"]*)"|([^,\s]+))`)
@@ -63,6 +63,7 @@ type CreateCameraInput struct {
 	Brand           string `json:"brand"`
 	Username        string `json:"username"`
 	Password        string `json:"password"`
+	DeviceTimezone  string `json:"device_timezone"`
 	AutoTuneEnabled *bool  `json:"auto_tune_enabled"`
 	// 设备类型: "ipc" / "nvr" / "dvr" / "encoder"
 	DeviceType string `json:"device_type"`
@@ -92,6 +93,7 @@ type UpdateCameraInput struct {
 	Brand           *string `json:"brand"`
 	Username        *string `json:"username"`
 	Password        *string `json:"password"`
+	DeviceTimezone  *string `json:"device_timezone"`
 	AutoTuneEnabled *bool   `json:"auto_tune_enabled"`
 	Status          *string `json:"status"`
 	// 设备类型: "ipc" / "nvr" / "dvr" / "encoder"
@@ -153,7 +155,9 @@ func (s *CameraService) Create(in *CreateCameraInput) (*model.Camera, error) {
 			cancel()
 			if err == nil && len(channels) > 0 {
 				ch := in.NVRChannel
-				if ch <= 0 { ch = 1 }
+				if ch <= 0 {
+					ch = 1
+				}
 				for _, c := range channels {
 					if c.Channel == ch && c.RTSPUrl != "" {
 						rtspURL = c.RTSPUrl
@@ -194,6 +198,7 @@ func (s *CameraService) Create(in *CreateCameraInput) (*model.Camera, error) {
 		Brand:           in.Brand,
 		Username:        in.Username,
 		Password:        in.Password,
+		DeviceTimezone:  in.DeviceTimezone,
 		AutoTuneEnabled: autoTune,
 		Status:          model.CameraStatusOffline,
 		DeviceType:      deviceType,
@@ -432,9 +437,17 @@ func (s *CameraService) Update(id uint, in *UpdateCameraInput) (*model.Camera, e
 	updates := map[string]any{}
 	needRebuildRTSP := false
 
-	if in.Name != nil { updates["name"] = *in.Name }
-	if in.IP != nil { updates["ip"] = *in.IP; needRebuildRTSP = true }
-	if in.Port != nil { updates["port"] = *in.Port; needRebuildRTSP = true }
+	if in.Name != nil {
+		updates["name"] = *in.Name
+	}
+	if in.IP != nil {
+		updates["ip"] = *in.IP
+		needRebuildRTSP = true
+	}
+	if in.Port != nil {
+		updates["port"] = *in.Port
+		needRebuildRTSP = true
+	}
 	if in.RTSPUrl != nil {
 		if *in.RTSPUrl != "" {
 			updates["rtsp_url"] = *in.RTSPUrl
@@ -443,44 +456,99 @@ func (s *CameraService) Update(id uint, in *UpdateCameraInput) (*model.Camera, e
 			needRebuildRTSP = true
 		}
 	}
-	if in.Brand != nil { updates["brand"] = *in.Brand; needRebuildRTSP = true }
-	if in.Username != nil { updates["username"] = *in.Username; needRebuildRTSP = true }
-	if in.Password != nil { updates["password"] = *in.Password; needRebuildRTSP = true }
-	if in.AutoTuneEnabled != nil { updates["auto_tune_enabled"] = *in.AutoTuneEnabled }
-	if in.Status != nil { updates["status"] = *in.Status }
-	if in.DeviceType != nil { updates["device_type"] = *in.DeviceType; needRebuildRTSP = true }
-	if in.NVRChannel != nil { updates["nvr_channel"] = *in.NVRChannel; needRebuildRTSP = true }
-	if in.PreferredCodec != nil { updates["preferred_codec"] = *in.PreferredCodec }
-	if in.StreamType != nil { updates["stream_type"] = *in.StreamType; needRebuildRTSP = true }
-	if in.AccessProtocol != nil { updates["access_protocol"] = *in.AccessProtocol }
-	if in.DeviceID != nil { updates["device_id"] = *in.DeviceID }
-	if in.ChannelID != nil { updates["channel_id"] = *in.ChannelID }
-	if in.Transport != nil { updates["transport"] = *in.Transport }
+	if in.Brand != nil {
+		updates["brand"] = *in.Brand
+		needRebuildRTSP = true
+	}
+	if in.Username != nil {
+		updates["username"] = *in.Username
+		needRebuildRTSP = true
+	}
+	if in.Password != nil {
+		updates["password"] = *in.Password
+		needRebuildRTSP = true
+	}
+	if in.DeviceTimezone != nil {
+		updates["device_timezone"] = *in.DeviceTimezone
+	}
+	if in.AutoTuneEnabled != nil {
+		updates["auto_tune_enabled"] = *in.AutoTuneEnabled
+	}
+	if in.Status != nil {
+		updates["status"] = *in.Status
+	}
+	if in.DeviceType != nil {
+		updates["device_type"] = *in.DeviceType
+		needRebuildRTSP = true
+	}
+	if in.NVRChannel != nil {
+		updates["nvr_channel"] = *in.NVRChannel
+		needRebuildRTSP = true
+	}
+	if in.PreferredCodec != nil {
+		updates["preferred_codec"] = *in.PreferredCodec
+	}
+	if in.StreamType != nil {
+		updates["stream_type"] = *in.StreamType
+		needRebuildRTSP = true
+	}
+	if in.AccessProtocol != nil {
+		updates["access_protocol"] = *in.AccessProtocol
+	}
+	if in.DeviceID != nil {
+		updates["device_id"] = *in.DeviceID
+	}
+	if in.ChannelID != nil {
+		updates["channel_id"] = *in.ChannelID
+	}
+	if in.Transport != nil {
+		updates["transport"] = *in.Transport
+	}
 
 	// 当 IP/端口/品牌/用户名/密码/设备类型/通道号/码流 变化时，自动重建 RTSP URL
 	if needRebuildRTSP && in.RTSPUrl == nil && camera.AccessProtocol == model.ProtocolRTSP {
 		ip := camera.IP
-		if in.IP != nil { ip = *in.IP }
+		if in.IP != nil {
+			ip = *in.IP
+		}
 		port := camera.Port
-		if in.Port != nil { port = *in.Port }
+		if in.Port != nil {
+			port = *in.Port
+		}
 		brand := camera.Brand
-		if in.Brand != nil { brand = *in.Brand }
+		if in.Brand != nil {
+			brand = *in.Brand
+		}
 		user := camera.Username
-		if in.Username != nil { user = *in.Username }
+		if in.Username != nil {
+			user = *in.Username
+		}
 		pass := camera.Password
-		if in.Password != nil { pass = *in.Password }
+		if in.Password != nil {
+			pass = *in.Password
+		}
 		ch := camera.NVRChannel
-		if in.NVRChannel != nil { ch = *in.NVRChannel }
+		if in.NVRChannel != nil {
+			ch = *in.NVRChannel
+		}
 		streamType := camera.StreamType
-		if in.StreamType != nil { streamType = *in.StreamType }
-		if streamType == "" { streamType = model.StreamTypeMain }
+		if in.StreamType != nil {
+			streamType = *in.StreamType
+		}
+		if streamType == "" {
+			streamType = model.StreamTypeMain
+		}
 		updates["rtsp_url"] = buildRTSPURL(brand, user, pass, ip, port, ch, streamType)
 	}
 	if rtspURL, ok := updates["rtsp_url"].(string); ok {
 		user := camera.Username
-		if in.Username != nil { user = *in.Username }
+		if in.Username != nil {
+			user = *in.Username
+		}
 		pass := camera.Password
-		if in.Password != nil { pass = *in.Password }
+		if in.Password != nil {
+			pass = *in.Password
+		}
 		updates["rtsp_url"] = ensureRTSPCredentials(rtspURL, user, pass)
 	}
 
@@ -514,7 +582,7 @@ func (s *CameraService) SyncTime(cameraID uint) error {
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 	defer cancel()
-	if err := s.onvif.SyncCameraTime(ctx, camera.IP, camera.Username, camera.Password, camera.NVRChannel); err != nil {
+	if err := s.onvif.SyncCameraTime(ctx, camera.IP, camera.Username, camera.Password, camera.NVRChannel, camera.DeviceTimezone); err != nil {
 		return err
 	}
 	s.db.Model(&model.Camera{}).Where("id = ?", cameraID).
@@ -576,7 +644,7 @@ func (s *CameraService) autoTune(camera model.Camera) {
 	defer cancel()
 
 	// 1) 时间同步
-	if err := s.onvif.SyncCameraTime(ctx, camera.IP, camera.Username, camera.Password, camera.NVRChannel); err != nil {
+	if err := s.onvif.SyncCameraTime(ctx, camera.IP, camera.Username, camera.Password, camera.NVRChannel, camera.DeviceTimezone); err != nil {
 		log.Printf("[ONVIF] camera %d (%s) sync time failed: %v", camera.ID, camera.IP, err)
 	} else {
 		s.db.Model(&model.Camera{}).Where("id = ?", camera.ID).

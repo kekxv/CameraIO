@@ -283,6 +283,14 @@
                   type="password"
                 />
               </div>
+              <div class="camera-form-field">
+                <label class="block text-sm font-medium text-slate-700 mb-1">设备时区（POSIX）</label>
+                <el-input
+                  v-model="form.device_timezone"
+                  placeholder="CST-8"
+                />
+                <p class="text-xs text-slate-400 mt-1">留空时读取设备设置；中国大陆设备可填写 CST-8</p>
+              </div>
             </div>
 
             <!-- 测试连接按钮 -->
@@ -724,6 +732,7 @@ const defaultForm = () => ({
   stream_type: 'main',
   username: '',
   password: '',
+  device_timezone: '',
   auto_tune_enabled: true,
   access_protocol: 'rtsp',
   device_id: '',

@@ -12,10 +12,10 @@
             <div class="recording-filter-fields compat-flex-gap-3">
               <div class="recording-filter-field recording-filter-field--camera"><label>摄像头</label><el-select v-model="filter.cameraId" clearable placeholder="全部" @change="applyHistoryFilters"><el-option label="全部" value="" /><el-option v-for="cam in cameras" :key="cam.id" :label="cam.name" :value="cam.id" /></el-select></div>
               <div class="recording-filter-field recording-filter-field--status"><label>状态</label><el-select v-model="filter.status" clearable placeholder="全部" @change="applyHistoryFilters"><el-option label="录制中" value="recording" /><el-option label="已完成" value="completed" /><el-option label="失败" value="failed" /></el-select></div>
-              <div class="recording-filter-field recording-filter-field--date"><label>录像日期</label><el-date-picker v-model="dateRange" type="daterange" range-separator="至" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" /></div>
+              <div class="recording-filter-field recording-filter-field--date"><label>录像时间</label><el-date-picker v-model="dateRange" type="datetimerange" range-separator="至" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" start-placeholder="开始时间" end-placeholder="结束时间" /></div>
             </div>
             <div class="recording-filter-actions compat-flex-gap-2">
-              <el-button plain @click="clearDateRange">清除日期</el-button>
+              <el-button plain @click="clearDateRange">清除时间</el-button>
               <el-button type="primary" @click="applyHistoryFilters">查询历史</el-button>
               <el-button plain @click="loadRecordings">刷新</el-button>
             </div>
@@ -29,6 +29,7 @@
         <el-card v-else shadow="never" class="overflow-hidden">
           <el-table :data="recordings" class="w-full">
             <el-table-column prop="id" label="ID" width="72" />
+            <el-table-column label="片段" width="90"><template #default="{ row = {} }">{{ row.segment_id ? `#${row.sequence || row.segment_id}` : '单文件' }}</template></el-table-column>
             <el-table-column label="摄像头" min-width="130"><template #default="{ row = {} }">{{ cameraName(row.camera_id) }}</template></el-table-column>
             <el-table-column label="开始时间" min-width="180"><template #default="{ row = {} }">{{ formatTime(row.start_time) }}</template></el-table-column>
             <el-table-column label="时长" width="100"><template #default="{ row = {} }">{{ formatDuration(row.duration) }}</template></el-table-column>

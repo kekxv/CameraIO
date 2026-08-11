@@ -143,30 +143,36 @@ const parseRecordingTime = (value, label) => {
 
 const parseRecordingDate = (value, label) => {
   if (!value) return null
-  const parts = value.split('-').map(Number)
-  if (parts.length !== 3 || parts.some((part) => !Number.isInteger(part))) {
-    throw new Error(`${label} 不是有效日期`)
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(value)
+  if (!match) {
+    throw new Error(`${label} 不是有效时间`)
   }
-  const date = new Date(parts[0], parts[1] - 1, parts[2])
-  if (date.getFullYear() !== parts[0] || date.getMonth() !== parts[1] - 1 || date.getDate() !== parts[2]) {
-    throw new Error(`${label} 不是有效日期`)
+  const [, yearText, monthText, dayText, hourText, minuteText] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  const hour = hourText === undefined ? 0 : Number(hourText)
+  const minute = minuteText === undefined ? 0 : Number(minuteText)
+  const date = new Date(year, month - 1, day, hour, minute)
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day || date.getHours() !== hour || date.getMinutes() !== minute) {
+    throw new Error(`${label} 不是有效时间`)
   }
-  return date
+  return { date, dateOnly: hourText === undefined }
 }
 
-export const normalizeRecordingDateRange = ({ startDate, endDate } = {}) => {
-  const start = parseRecordingDate(startDate, '开始日期')
-  const end = parseRecordingDate(endDate, '结束日期')
+export const normalizeRecordingDateRange = ({ startDate, endDate, startTime, endTime } = {}) => {
+  const start = parseRecordingDate(startTime || startDate, '开始时间')
+  const end = parseRecordingDate(endTime || endDate, '结束时间')
   if (!start && !end) return {}
-  if (start && end && end.getTime() < start.getTime()) {
-    throw new Error('结束日期必须不早于开始日期')
+  if (start && end && end.date.getTime() <= start.date.getTime()) {
+    throw new Error('结束时间必须晚于开始时间')
   }
 
   const params = {}
-  if (start) params.start_time = start.toISOString()
+  if (start) params.start_time = start.date.toISOString()
   if (end) {
-    end.setDate(end.getDate() + 1)
-    params.end_time = end.toISOString()
+    if (end.dateOnly) end.date.setDate(end.date.getDate() + 1)
+    params.end_time = end.date.toISOString()
   }
   return params
 }

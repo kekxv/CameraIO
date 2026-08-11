@@ -27,13 +27,16 @@ func NewONVIFService() *ONVIFService {
 
 // SyncCameraTime 通过 ONVIF SetSystemDateAndTime 将摄像头时间同步为服务器当前时间。
 // nvrChannel 为 NVR 通道号（0 表示 IPC 直连，1-256 表示 NVR 的第 N 路通道）。
-func (s *ONVIFService) SyncCameraTime(ctx context.Context, ip, user, pass string, nvrChannel int) error {
+func (s *ONVIFService) SyncCameraTime(ctx context.Context, ip, user, pass string, nvrChannel int, timezoneOverride string) error {
 	endpoint, err := s.probeDeviceEndpoint(ctx, ip, user, pass)
 	if err != nil {
 		return fmt.Errorf("probe device: %w", err)
 	}
 	// 先读取设备当前时区，用设备自己的时区来设置时间（宇视/海康兼容性最好）
-	tz := s.getDeviceTimezone(ctx, endpoint, user, pass)
+	tz := timezoneOverride
+	if tz == "" {
+		tz = s.getDeviceTimezone(ctx, endpoint, user, pass)
+	}
 	now := time.Now()
 	body := buildSetSystemDateAndTimeEnvelope(now, tz)
 	_, err = s.callONVIF(ctx, endpoint, user, pass, body, "http://www.onvif.org/ver10/device/wsdl/SetSystemDateAndTime")
@@ -663,7 +666,7 @@ func buildSetSystemDateAndTimeEnvelope(t time.Time, timezone string) string {
 	)
 }
 
-// getDeviceTimezone 读取设备当前时区。如果读取失败，返回 "GMT0"。
+// getDeviceTimezone 读取设备当前时区。如果读取失败，返回中国标准时间 CST-8。
 func (s *ONVIFService) getDeviceTimezone(ctx context.Context, endpoint, user, pass string) string {
 	body := `<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
@@ -672,25 +675,14 @@ func (s *ONVIFService) getDeviceTimezone(ctx context.Context, endpoint, user, pa
     <tds:GetSystemDateAndTime/>
   </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>`
-	// GetSystemDateAndTime 无需鉴权
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body))
+	data, err := s.callONVIF(ctx, endpoint, user, pass, body, "http://www.onvif.org/ver10/device/wsdl/GetSystemDateAndTime")
 	if err != nil {
-		return "GMT0"
-	}
-	req.Header.Set("Content-Type", "application/soap+xml; charset=utf-8")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "GMT0"
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "GMT0"
+		return "CST-8"
 	}
 	// 从响应中提取 <tt:TZ>...</tt:TZ>
-	tz := extractXMLTagValue(string(data), "TZ")
+	tz := extractXMLTagValue(data, "TZ")
 	if tz == "" {
-		return "GMT0"
+		return "CST-8"
 	}
 	return tz
 }
@@ -727,9 +719,9 @@ func parseDeviceinfo(body string) (*Deviceinfo, error) {
 // 海康格式类似。
 func parseProfiles(body string) []ChannelInfo {
 	type profile struct {
-		Token string `xml:"token,attr"`
-		Fixed string `xml:"fixed,attr"`
-		Name  string `xml:"Name"`
+		Token       string `xml:"token,attr"`
+		Fixed       string `xml:"fixed,attr"`
+		Name        string `xml:"Name"`
 		VideoSource struct {
 			Token string `xml:"token,attr"`
 		} `xml:"VideoSourceConfiguration"`

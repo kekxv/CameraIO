@@ -159,7 +159,7 @@ func (h *Handler) ListRecordings(c *gin.Context) {
 		query.PageSize, _ = strconv.Atoi(v)
 	}
 
-	recs, total, err := h.recorderSvc.List(query)
+	recs, total, err := h.recorderSvc.ListHistory(query)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return

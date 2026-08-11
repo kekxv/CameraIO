@@ -194,7 +194,7 @@ func (m *SystemMonitor) syncCameraTime(cam model.Camera) {
 	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 	defer cancel()
 
-	if err := m.onvif.SyncCameraTime(ctx, cam.IP, cam.Username, cam.Password, cam.NVRChannel); err != nil {
+	if err := m.onvif.SyncCameraTime(ctx, cam.IP, cam.Username, cam.Password, cam.NVRChannel, cam.DeviceTimezone); err != nil {
 		log.Printf("[monitor] camera %d (%s) time sync failed: %v", cam.ID, cam.IP, err)
 		return
 	}

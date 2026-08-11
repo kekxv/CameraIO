@@ -203,6 +203,25 @@ func TestBuildSetSystemDateAndTimeEnvelope(t *testing.T) {
 	}
 }
 
+func TestGetDeviceTimezoneFallsBackToChinaStandardTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if !strings.Contains(string(body), "UsernameToken") {
+			t.Fatal("GetSystemDateAndTime must use authenticated ONVIF request")
+		}
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><Envelope><Body><GetSystemDateAndTimeResponse/></Body></Envelope>`))
+	}))
+	defer server.Close()
+
+	got := NewONVIFService().getDeviceTimezone(context.Background(), server.URL, "admin", "pass")
+	if got != "CST-8" {
+		t.Fatalf("getDeviceTimezone() = %q, want CST-8", got)
+	}
+}
+
 func TestBuildSetEncoderConfigEnvelope(t *testing.T) {
 	env := buildSetEncoderConfigEnvelope("test-token-123")
 

@@ -132,6 +132,7 @@ Authorization: Bearer <token>
   "brand": "hikvision",
   "username": "admin",
   "password": "hikadmin",
+  "device_timezone": "CST-8",
   "auto_tune_enabled": true,
   "access_protocol": "rtsp"
 }
@@ -148,6 +149,7 @@ Authorization: Bearer <token>
 | brand | string | | `custom` | 品牌：`hikvision` / `uniview` / `custom` |
 | username | string | | - | ONVIF/RTSP 用户名 |
 | password | string | | - | ONVIF/RTSP 密码 |
+| device_timezone | string | | 自动读取（失败时 `CST-8`） | ONVIF POSIX 时区覆写；中国大陆使用 `CST-8` |
 | auto_tune_enabled | bool | | true | 是否自动调优（仅 RTSP） |
 | access_protocol | string | | `rtsp` | 接入协议：`rtsp` 或 `gb28181` |
 | device_id | string | | - | 20 位国标编码（GB28181 必填） |
@@ -386,8 +388,10 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
 
 ### GET /recordings
 
-查询录像历史。`start_time` 和 `end_time` 构成可选的日期范围；未提供时查询全部
-历史记录。筛选结果仍使用 `page` 和 `page_size` 分页，不会因日期筛选而限制为单页。
+查询录像历史。`start_time` 和 `end_time` 构成可选的精确时间范围；未提供时查询全部
+历史记录。分段录像按实际视频文件逐段返回，`id`/`recording_id` 仍指向用于停止和删除的
+逻辑录像会话，`segment_id` 则标识当前列表行的物理片段。筛选结果仍使用 `page` 和
+`page_size` 分页，不会因时间筛选而限制为单页。
 
 **查询参数**
 
@@ -395,8 +399,8 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
 |---|---|---|
 | camera_id | uint | 按摄像头筛选 |
 | status | string | 按状态筛选：`recording` / `completed` / `failed` |
-| start_time | string | RFC3339 UTC；返回结束时间晚于该时刻的会话 |
-| end_time | string | RFC3339 UTC；返回开始时间早于该时刻的会话 |
+| start_time | string | RFC3339 UTC；返回结束时间晚于该时刻的物理视频 |
+| end_time | string | RFC3339 UTC；返回开始时间早于该时刻的物理视频 |
 | page | int | 页码（默认 1） |
 | page_size | int | 每页条数（默认 20） |
 
@@ -409,12 +413,15 @@ MJPEG 预览流（`multipart/x-mixed-replace`）。
     "recordings": [
       {
         "id": 105,
+        "recording_id": 105,
+        "segment_id": 301,
+        "sequence": 1,
         "camera_id": 1,
-        "file_path": "data/recordings/1/105",
-        "file_size": 52428800,
+        "file_path": "data/recordings/1/105/20260802T143000Z.mp4",
+        "file_size": 4194304,
         "start_time": "2026-08-02T14:30:00Z",
-        "end_time": "2026-08-02T15:00:00Z",
-        "duration": 1800,
+        "end_time": "2026-08-02T14:31:00Z",
+        "duration": 60,
         "trigger_type": "api",
         "status": "completed",
         "storage_mode": "segmented"

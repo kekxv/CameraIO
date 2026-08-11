@@ -6,17 +6,19 @@ import (
 
 // Camera 摄像头数据模型，支持 RTSP 和 GB28181 两种接入方式。
 type Camera struct {
-	ID                uint      `json:"id" gorm:"primaryKey"`
-	Name              string    `json:"name" gorm:"type:varchar(64);not null"`
-	IP                string    `json:"ip" gorm:"type:varchar(45);not null"`
-	Port              int       `json:"port" gorm:"default:554"`
-	RTSPUrl           string    `json:"rtsp_url" gorm:"type:varchar(255);not null"`
-	Brand             string    `json:"brand" gorm:"type:varchar(32);default:custom"`
-	Username          string    `json:"username,omitempty" gorm:"type:varchar(64)"`
-	Password          string    `json:"password,omitempty" gorm:"type:varchar(64)"`
-	AutoTuneEnabled   bool      `json:"auto_tune_enabled" gorm:"default:true"`
-	Status            string    `json:"status" gorm:"type:varchar(16);default:offline"`
-	LastTimeSync      *time.Time `json:"last_time_sync,omitempty"`
+	ID       uint   `json:"id" gorm:"primaryKey"`
+	Name     string `json:"name" gorm:"type:varchar(64);not null"`
+	IP       string `json:"ip" gorm:"type:varchar(45);not null"`
+	Port     int    `json:"port" gorm:"default:554"`
+	RTSPUrl  string `json:"rtsp_url" gorm:"type:varchar(255);not null"`
+	Brand    string `json:"brand" gorm:"type:varchar(32);default:custom"`
+	Username string `json:"username,omitempty" gorm:"type:varchar(64)"`
+	Password string `json:"password,omitempty" gorm:"type:varchar(64)"`
+	// DeviceTimezone: optional POSIX timezone sent during ONVIF time synchronization (for example CST-8).
+	DeviceTimezone  string     `json:"device_timezone,omitempty" gorm:"type:varchar(64)"`
+	AutoTuneEnabled bool       `json:"auto_tune_enabled" gorm:"default:true"`
+	Status          string     `json:"status" gorm:"type:varchar(16);default:offline"`
+	LastTimeSync    *time.Time `json:"last_time_sync,omitempty"`
 	// LastError: 最近一次错误信息（如 GB28181 注册失败、心跳超时等），正常时为空
 	LastError string `json:"last_error,omitempty" gorm:"type:varchar(255)"`
 	// Codec: 视频编码格式（H.264 / H.265），由在线检查时获取

@@ -475,6 +475,30 @@ func TestRecordingAPI(t *testing.T) {
 	}
 }
 
+func TestCameraDeviceTimezonePersists(t *testing.T) {
+	h := setupTestHandler(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	body := `{"name":"timezone-camera","ip":"192.168.1.100","auto_tune_enabled":false,"device_timezone":"CST-8"}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cameras", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create camera status = %d, want 201: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data model.Camera `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode camera response: %v", err)
+	}
+	if response.Data.DeviceTimezone != "CST-8" {
+		t.Fatalf("device_timezone = %q, want CST-8", response.Data.DeviceTimezone)
+	}
+}
+
 func TestRecordingListFilters(t *testing.T) {
 	h := setupTestHandler(t)
 	router := h.SetupRouter()
@@ -862,6 +886,68 @@ func TestListRecordingsParsesUTCOverlapFilters(t *testing.T) {
 	}
 	if response.Data.Total != 1 || len(response.Data.Recordings) != 1 || response.Data.Recordings[0].FilePath != "overlap.mp4" {
 		t.Fatalf("filtered recordings = %+v total=%d", response.Data.Recordings, response.Data.Total)
+	}
+}
+
+func TestListRecordingsReturnsEachSegmentedVideoAsARecord(t *testing.T) {
+	h, db := setupTestHandlerWithDB(t)
+	router := h.SetupRouter()
+	token := createTestUser(t, h)
+	start := time.Date(2026, 8, 11, 8, 0, 0, 0, time.UTC)
+	recording := model.Recording{
+		CameraID:    1,
+		FilePath:    "scheduled-session",
+		StartTime:   start,
+		Status:      model.RecordingStatusCompleted,
+		StorageMode: model.StorageModeSegmented,
+		TriggerType: model.TriggerSchedule,
+	}
+	if err := db.Create(&recording).Error; err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+	for sequence := 1; sequence <= 2; sequence++ {
+		segmentStart := start.Add(time.Duration(sequence-1) * time.Minute)
+		segment := model.RecordingSegment{
+			RecordingID: recording.ID,
+			CameraID:    recording.CameraID,
+			Sequence:    sequence,
+			FilePath:    fmt.Sprintf("scheduled-%d.mp4", sequence),
+			FileSize:    1024,
+			StartTime:   segmentStart,
+			EndTime:     segmentStart.Add(time.Minute),
+			DurationMS:  int64(time.Minute / time.Millisecond),
+			Status:      model.RecordingStatusCompleted,
+			Format:      model.FormatMP4,
+		}
+		if err := db.Create(&segment).Error; err != nil {
+			t.Fatalf("create segment: %v", err)
+		}
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Recordings []struct {
+				ID        uint      `json:"id"`
+				SegmentID uint      `json:"segment_id"`
+				StartTime time.Time `json:"start_time"`
+			} `json:"recordings"`
+			Total int64 `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if response.Data.Total != 2 || len(response.Data.Recordings) != 2 {
+		t.Fatalf("recordings = %+v total=%d, want two physical segments", response.Data.Recordings, response.Data.Total)
+	}
+	if response.Data.Recordings[0].ID != recording.ID || response.Data.Recordings[0].SegmentID == 0 || !response.Data.Recordings[0].StartTime.Equal(start.Add(time.Minute)) {
+		t.Fatalf("first row = %+v, want newest segment of recording %d", response.Data.Recordings[0], recording.ID)
 	}
 }
 
